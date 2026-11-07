@@ -1,0 +1,436 @@
+{
+ "started": "2026-11-07T07:31:45.962Z",
+ "ps": {
+  "uxp": {}
+ },
+ "results": [
+  {
+   "name": "1. Belge yapısı: Orijinal/Temizlik/Çeviri grupları",
+   "status": "PASS",
+   "ms": 114,
+   "detail": {
+    "order": [
+     "Çeviri",
+     "Temizlik",
+     "Orijinal"
+    ],
+    "originalChildren": [
+     "Katman 0"
+    ]
+   }
+  },
+  {
+   "name": "2. Bölge analizi + otomatik yöntem seçimi (düz balon / tram / çizim üstü SFX)",
+   "status": "PASS",
+   "ms": 1027,
+   "detail": [
+    {
+     "order": 1,
+     "type": "dialog",
+     "kind": "flat",
+     "near": 100,
+     "edge": 0,
+     "periodicity": {
+      "score": 0,
+      "period": 0
+     },
+     "method": "flat",
+     "reason": "Düz zemin (%100 tek renk, kenar %0): yerel dolgu anında, kredisiz ve çizgiye dokunmaz."
+    },
+    {
+     "order": 2,
+     "type": "dialog",
+     "kind": "flat",
+     "near": 100,
+     "edge": 0,
+     "periodicity": {
+      "score": 0,
+      "period": 0
+     },
+     "method": "flat",
+     "reason": "Düz zemin (%100 tek renk, kenar %0): yerel dolgu anında, kredisiz ve çizgiye dokunmaz."
+    },
+    {
+     "order": 3,
+     "type": "dialog",
+     "kind": "flat",
+     "near": 100,
+     "edge": 0,
+     "periodicity": {
+      "score": 0,
+      "period": 0
+     },
+     "method": "flat",
+     "reason": "Düz zemin (%100 tek renk, kenar %0): yerel dolgu anında, kredisiz ve çizgiye dokunmaz."
+    },
+    {
+     "order": 4,
+     "type": "sfx",
+     "kind": "art",
+     "near": 22,
+     "edge": 9,
+     "periodicity": {
+      "score": 0,
+      "period": 0
+     },
+     "method": "torii",
+     "reason": "Çizim üstü SFX (kenar yoğunluğu %9): Torii Inpaint seçildi. Sonuç zayıfsa Adobe Üretken Dolgu önerilir (onayınızla)."
+    },
+    {
+     "order": 5,
+     "type": "dialog",
+     "kind": "flat",
+     "near": 96,
+     "edge": 1,
+     "periodicity": {
+      "score": 0,
+      "period": 0
+     },
+     "method": "flat",
+     "reason": "Düz zemin (%96 tek renk, kenar %1): yerel dolgu anında, kredisiz ve çizgiye dokunmaz."
+    },
+    {
+     "order": "renkli",
+     "type": "dialog",
+     "kind": "art",
+     "bg": "#7b484a",
+     "near": 0,
+     "edge": 11,
+     "method": "torii",
+     "reason": "Çizim üstü yazı (kenar yoğunluğu %11): Torii Inpaint seçildi. Sonuç zayıfsa Adobe Üretken Dolgu önerilir (onayınızla)."
+    },
+    {
+     "order": "tram",
+     "type": "offbubble",
+     "kind": "screentone",
+     "near": 75,
+     "edge": 58,
+     "periodicity": {
+      "score": 1,
+      "period": 6
+     },
+     "method": "torii",
+     "reason": "Tramlı zemin (periyot 6 px, düzenlilik %100): desen sürekliliği için Torii Inpaint (0,02 kredi)."
+    }
+   ]
+  },
+  {
+   "name": "3. Sadece Balonlar: SFX/diğer pikseller birebir korunur (yerel temizlik + dizgi)",
+   "status": "PASS",
+   "ms": 3214,
+   "detail": {
+    "sfxPixelsChecked": 159600,
+    "changed": 0,
+    "dialogLayers": [
+     13,
+     14,
+     15,
+     16
+    ],
+    "notes": [
+     "ok: Temizlik tamam. #1: Yerel düz dolgu (kredisiz), #2: Yerel düz dolgu (kredisiz), #3: Yerel düz dolgu (kredisiz), #5: Yerel düz dolgu (kredisiz)",
+     "warn: Dizgi tamam: 4 katman. Uyarılar: #3: kontur/gölge uygulanamadı (set: acceptance.psjs: Ayarla: komutu şu an kullanılabilir değil. (-25920))"
+    ]
+   }
+  },
+  {
+   "name": "4. Temizlik: maske dışı pikseller değişmez, maske içi değişir (ayrı katman + katman maskesi)",
+   "status": "PASS",
+   "ms": 198,
+   "detail": {
+    "outsideChanged": 0,
+    "insideChanged": 18835,
+    "maskPixels": 31523,
+    "method": "flat"
+   }
+  },
+  {
+   "name": "5. Tekrar çalıştırma: aynı öğeden ikinci katman oluşmaz",
+   "status": "PASS",
+   "ms": 6151,
+   "detail": {
+    "before": {
+     "trans": 5,
+     "clean": 5
+    },
+    "after": {
+     "trans": 5,
+     "clean": 5
+    }
+   }
+  },
+  {
+   "name": "6. Dizgi: düzenlenebilir metin katmanları, kutu konumu, balona sığdırma, Türkçe karakterler",
+   "status": "PASS",
+   "ms": 86,
+   "detail": [
+    {
+     "order": 1,
+     "contents": "Xiaofei, ben önden çıkıyorum. Acele et, tamam mı?",
+     "font": "ArialMT",
+     "sizePx": 31,
+     "isBox": true,
+     "box": [
+      225,
+      177
+     ],
+     "centerDist": 0,
+     "overflow": false,
+     "kind": "text"
+    },
+    {
+     "order": 2,
+     "contents": "Ne kadar da belli eden bir ifade…",
+     "font": "ArialMT",
+     "sizePx": 37.5,
+     "isBox": true,
+     "box": [
+      347,
+      119
+     ],
+     "centerDist": 0,
+     "overflow": false,
+     "kind": "text"
+    },
+    {
+     "order": 3,
+     "contents": "AMA DAHA DA YAKLAŞIYORSUN!",
+     "font": "Impact",
+     "sizePx": 40,
+     "isBox": true,
+     "box": [
+      396,
+      144
+     ],
+     "centerDist": 0,
+     "overflow": false,
+     "kind": "text"
+    },
+    {
+     "order": 4,
+     "contents": "ÇAT!",
+     "font": "Impact",
+     "sizePx": 110,
+     "isBox": true,
+     "box": [
+      293,
+      241
+     ],
+     "centerDist": 44,
+     "overflow": false,
+     "kind": "text"
+    },
+    {
+     "order": 5,
+     "contents": "HA? HA?",
+     "font": "ArialMT",
+     "sizePx": 40,
+     "isBox": true,
+     "box": [
+      117,
+      126
+     ],
+     "centerDist": 0,
+     "overflow": false,
+     "kind": "text"
+    }
+   ]
+  },
+  {
+   "name": "7. Kurallar: bağırma ve SFX kuralı + uygulanan kural kaynağı",
+   "status": "PASS",
+   "ms": 11,
+   "detail": {
+    "font": "Impact",
+    "source": {
+     "level": "series",
+     "label": "Seri: Seri A",
+     "rule": "Bağırma A"
+    },
+    "strokeApplied": false,
+    "note": "kontur bu bağlamda uygulanamadı (betik bağlamında -25920 beklenir; eklenti panelinde ayrıca doğrulanmalı)"
+   }
+  },
+  {
+   "name": "8. Aynı sayfaya iki seri profili: doğru fontlar",
+   "status": "PASS",
+   "ms": 7324,
+   "detail": {
+    "profileB": {
+     "#1/dialog/normal": "TimesNewRomanPSMT",
+     "#2/dialog/normal": "TimesNewRomanPSMT",
+     "#3/dialog/shout": "Georgia-Bold",
+     "#4/sfx/normal": "ComicSansMS-Bold",
+     "#5/dialog/normal": "TimesNewRomanPSMT"
+    },
+    "backToA": "ArialMT"
+   }
+  },
+  {
+   "name": "9. Elle düzenleme korunur: Photoshop'ta font/metin değişikliği → toplu dizgi ezmez",
+   "status": "PASS",
+   "ms": 2253,
+   "detail": {
+    "contents": "Elle düzeltilmiş metin: ĞÜŞİÖÇ",
+    "font": "TimesNewRomanPSMT",
+    "manual": {
+     "font": "TimesNewRomanPSMT"
+    }
+   }
+  },
+  {
+   "name": "10. Karakter bazlı biçim: tek alan değişince diğer aralıklar korunur",
+   "status": "PASS",
+   "ms": 156,
+   "detail": {
+    "ranges": 2,
+    "redRanges": 1,
+    "sizePx": 24,
+    "tracking": 20
+   }
+  },
+  {
+   "name": "11. Kutu boyutlandırma ≠ katman ölçekleme",
+   "status": "PASS",
+   "ms": 8063,
+   "detail": {
+    "before": [
+     117,
+     126,
+     40,
+     100
+    ],
+    "afterBox": [
+     177,
+     166,
+     40,
+     100
+    ],
+    "afterScale": [
+     177,
+     166,
+     48,
+     120
+    ],
+    "rawPt": [
+     40,
+     48.000000000029104
+    ]
+   }
+  },
+  {
+   "name": "12. Sürükleme oturumu: tek geçmiş adımı; iptal → başlangıç konumu",
+   "status": "PASS",
+   "ms": 21788,
+   "detail": {
+    "historyDelta": 1,
+    "moved": [
+     432,
+     288
+    ],
+    "cancelRestored": true,
+    "lastHistory": "#5 taşı"
+   }
+  },
+  {
+   "name": "13. Undo/Redo: elle düzenlenen metin korunur, panel eşitlenir",
+   "status": "PASS",
+   "ms": 144,
+   "detail": {
+    "lastSteps": [
+     "kutu",
+     "ölçek",
+     "geri",
+     "#5 taşı"
+    ],
+    "typesetStepIndex": 12,
+    "contents": "Elle düzeltilmiş metin: ĞÜŞİÖÇ"
+   }
+  },
+  {
+   "name": "14. PSD kaydet → kapat → aç: eşleşmeler, kilitler, manuel değerler geri gelir",
+   "status": "PASS",
+   "ms": 5381,
+   "detail": {
+    "items": 5,
+    "locks": {
+     "text": false,
+     "style": true,
+     "position": true
+    },
+    "manual": {
+     "font": "TimesNewRomanPSMT"
+    },
+    "contents": "Elle düzeltilmiş metin: ĞÜŞİÖÇ",
+    "font": "TimesNewRomanPSMT"
+   }
+  },
+  {
+   "name": "15. Belge güvenliği: iş sırasında belge değişirse sonuç yanlış belgeye yazılmaz",
+   "status": "PASS",
+   "ms": 798,
+   "detail": {
+    "deferred": true,
+    "otherDocUntouched": 1,
+    "appliedAfterReturn": true
+   }
+  },
+  {
+   "name": "16. Türkçe glif testi (Glif Koruması ile)",
+   "status": "PASS",
+   "ms": 2951,
+   "detail": {
+    "arial": [],
+    "Webdings": [
+     "Ğ",
+     "İ",
+     "Ş",
+     "ğ",
+     "ı",
+     "ş"
+    ]
+   }
+  },
+  {
+   "name": "17. â/Â → a/A seçeneği diğer Türkçe harfleri korur",
+   "status": "PASS",
+   "ms": 0,
+   "detail": "Hala kağıt ALEM ğüşıöç İ…"
+  }
+ ],
+ "notes": [],
+ "stage": "test1: modal",
+ "doc": {
+  "id": 353,
+  "w": 800,
+  "h": 10000,
+  "res": 72
+ },
+ "fonts": {
+  "fontA": "ArialMT",
+  "fontAShout": "Impact",
+  "fontASfx": "Impact",
+  "fontB": "TimesNewRomanPSMT",
+  "fontBShout": "Georgia-Bold",
+  "fontBSfx": "ComicSansMS-Bold"
+ },
+ "toneStats": {
+  "order": "tram",
+  "type": "offbubble",
+  "kind": "screentone",
+  "near": 75,
+  "edge": 58,
+  "periodicity": {
+   "score": 1,
+   "period": 6
+  },
+  "method": "torii",
+  "reason": "Tramlı zemin (periyot 6 px, düzenlilik %100): desen sürekliliği için Torii Inpaint (0,02 kredi)."
+ },
+ "reopenedDocId": 381,
+ "finished": "2026-11-07T07:32:49.339Z",
+ "summary": {
+  "pass": 17,
+  "fail": 0
+ }
+}

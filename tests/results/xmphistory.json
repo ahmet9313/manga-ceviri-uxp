@@ -1,0 +1,13 @@
+{
+ "before": [
+  "MCS_XMPH",
+  "Yeni"
+ ],
+ "after": [
+  "MCS_XMPH",
+  "Yeni"
+ ],
+ "addsHistory": false,
+ "readBack": true,
+ "finished": true
+}

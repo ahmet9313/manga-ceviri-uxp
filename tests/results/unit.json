@@ -1,0 +1,196 @@
+{
+ "results": [
+  {
+   "name": "Multipart: v2/upload texts alanları + Bearer",
+   "status": "PASS",
+   "detail": {
+    "bytes": 11750
+   }
+  },
+  {
+   "name": "429 → üstel geri çekilme ile yeniden dene (ücretsiz ret)",
+   "status": "PASS",
+   "detail": {
+    "attempts": 3
+   }
+  },
+  {
+   "name": "Belirsiz zaman aşımı: ücretli istek OTOMATİK tekrar gönderilmez",
+   "status": "PASS",
+   "detail": {
+    "attempts": 1,
+    "message": "İstek zaman aşımına uğradı veya bağlantı koptu. Sunucunun isteği işleyip işlemediği bilinmiyor; kredi düşmüş olabilir."
+   }
+  },
+  {
+   "name": "Hız sınırı: istekler arası ≥1 sn",
+   "status": "PASS",
+   "detail": {
+    "gaps": [
+     1004,
+     1004
+    ]
+   }
+  },
+  {
+   "name": "v2/upload text[]: x,y MERKEZ → belge kutusu (+ kırpma ofseti)",
+   "status": "PASS",
+   "detail": {
+    "bounds": {
+     "left": 698,
+     "top": 2256,
+     "right": 748,
+     "bottom": 2397
+    },
+    "type": "offbubble"
+   }
+  },
+  {
+   "name": "v2/ocr: BGR renk, poligon, kırpma ofseti, tür önerisi",
+   "status": "PASS",
+   "detail": {
+    "item": {
+     "bounds": {
+      "left": 60,
+      "top": 1320,
+      "right": 220,
+      "bottom": 1370
+     },
+     "type": "dialog",
+     "lang": "en"
+    }
+   }
+  },
+  {
+   "name": "Birleştirme: aynı öğe ikinci kez eklenmez, kilitli metin korunur",
+   "status": "PASS",
+   "detail": {
+    "items": 2
+   }
+  },
+  {
+   "name": "Stil önceliği: manuel → bölüm → seri → genel → varsayılan; en yüksek öncelikli kural",
+   "status": "PASS",
+   "detail": {
+    "color": {
+     "level": "manual",
+     "label": "Manuel değer"
+    },
+    "sizePx": {
+     "level": "chapter",
+     "label": "Bölüm",
+     "rule": "B-bağırma"
+    },
+    "font": {
+     "level": "series",
+     "label": "Seri",
+     "rule": "S-yüksek"
+    },
+    "strokeEnabled": {
+     "level": "series",
+     "label": "Seri",
+     "rule": "S-yüksek"
+    },
+    "tracking": {
+     "level": "series",
+     "label": "Seri (taban)"
+    },
+    "align": {
+     "level": "global",
+     "label": "Genel (taban)"
+    },
+    "fallbackFont": {
+     "level": "default",
+     "label": "Varsayılan"
+    },
+    "minSizePx": {
+     "level": "default",
+     "label": "Varsayılan"
+    },
+    "maxSizePx": {
+     "level": "default",
+     "label": "Varsayılan"
+    },
+    "leadingPct": {
+     "level": "default",
+     "label": "Varsayılan"
+    },
+    "fauxBold": {
+     "level": "default",
+     "label": "Varsayılan"
+    },
+    "fauxItalic": {
+     "level": "default",
+     "label": "Varsayılan"
+    },
+    "uppercase": {
+     "level": "default",
+     "label": "Varsayılan"
+    },
+    "strokeSize": {
+     "level": "default",
+     "label": "Varsayılan"
+    },
+    "strokeColor": {
+     "level": "default",
+     "label": "Varsayılan"
+    },
+    "shadowEnabled": {
+     "level": "default",
+     "label": "Varsayılan"
+    },
+    "shadowColor": {
+     "level": "default",
+     "label": "Varsayılan"
+    },
+    "shadowDistance": {
+     "level": "default",
+     "label": "Varsayılan"
+    },
+    "shadowSize": {
+     "level": "default",
+     "label": "Varsayılan"
+    },
+    "fit": {
+     "level": "default",
+     "label": "Varsayılan"
+    },
+    "paddingPct": {
+     "level": "default",
+     "label": "Varsayılan"
+    },
+    "warpStyle": {
+     "level": "default",
+     "label": "Varsayılan"
+    },
+    "warpBend": {
+     "level": "default",
+     "label": "Varsayılan"
+    }
+   }
+  },
+  {
+   "name": "PNG kodla/çöz gidiş-dönüş (maske + RGB)",
+   "status": "PASS",
+   "detail": "ok"
+  },
+  {
+   "name": "Loglarda anahtar maskeleme",
+   "status": "PASS",
+   "detail": "Authorization: **** ******** {\"x-byok-google\":\"****\"}"
+  },
+  {
+   "name": "Ekran→belge dönüşümü (zoom, DPI)",
+   "status": "PASS",
+   "detail": [
+    25,
+    50
+   ]
+  }
+ ],
+ "finished": true,
+ "summary": {
+  "pass": 11,
+  "fail": 0
+ }
+}

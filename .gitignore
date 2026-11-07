@@ -1,0 +1,14 @@
+# Paket çıktısı (tools/package-ccx.ps1 ile yeniden üretilir)
+dist/
+
+# Gizli bilgiler — anahtarlar asla depoya girmez (eklenti UXP Secure Storage kullanır)
+.env
+*.key
+secrets*.json
+
+# İşletim sistemi / editör
+Thumbs.db
+desktop.ini
+.DS_Store
+.vscode/
+node_modules/
