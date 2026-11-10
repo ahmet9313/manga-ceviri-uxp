@@ -140,7 +140,7 @@ function card(id, title, sub, bodyNodes, state, defaultOpen) {
 }
 
 function emptyState(icon, title, text, action) {
-  return h("div", { class: "empty" }, h("div", { class: "big" }, icon), h("div", { class: "title" }, title), h("div", null, text), action || null);
+  return h("div", { class: "empty-state" }, h("div", { class: "big" }, icon), h("div", { class: "title" }, title), h("div", null, text), action || null);
 }
 
 function setDisabled(el, b) { if (b) el.setAttribute("disabled", ""); else el.removeAttribute("disabled"); }

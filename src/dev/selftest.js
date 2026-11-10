@@ -1,13 +1,13 @@
 // Panel içi CANLI kabul testi: gerçek Torii API + gerçek Photoshop belgesi.
 // Etkin belgede çalışır (test sayfası açık olmalı). Rapor eklenti veri klasörüne "selftest-report.json" olarak yazılır.
 "use strict";
-const { modal, getDoc, findLayer, bp } = require("./ps/api");
-const pixels = require("./ps/pixels");
-const text = require("./ps/text");
-const geom = require("./util/geom");
-const storage = require("./model/storage");
-const profiles = require("./model/profiles");
-const { log } = require("./util/common");
+const { modal, getDoc, findLayer, bp } = require("../ps/api");
+const pixels = require("../ps/pixels");
+const text = require("../ps/text");
+const geom = require("../util/geom");
+const storage = require("../model/storage");
+const profiles = require("../model/profiles");
+const { log } = require("../util/common");
 
 async function runLive(app, opts) {
   opts = opts || {};

@@ -51,7 +51,7 @@ class ItemList {
         TONE_SHORT[it.tone] ? h("span", { class: "pill tone" }, TONE_SHORT[it.tone]) : null,
         ...flags,
         h("div", { class: "steps-mini" }, dot(it.status.cleaned, "T", "Temizlendi"), dot(it.status.translated, "Ç", "Çevrildi"), dot(it.status.typeset, "D", "Dizildi"))),
-      h("div", { class: "tr" + (it.translation ? "" : " empty") }, it.translation || "Çeviri bekliyor"),
+      h("div", { class: "tr" + (it.translation ? "" : " pending") }, it.translation || "Çeviri bekliyor"),
       it.source ? h("div", { class: "src" }, it.source) : null),
     h("div", { class: "del", "data-del": "1", title: "Bu öğeyi sil (Delete)", role: "button" }, "✕"));
   }

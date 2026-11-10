@@ -216,6 +216,7 @@ async function translateBy(docId, layerId, dx, dy) {
  * → {sizePx, overflow, textH}
  */
 async function fitToBox(docId, layerId, box, opts) {
+  const P = opts.prof, T = Date.now(); let tl = T; const lap = (k) => { if (!P) return; const n = Date.now(); P["fit_" + k] = (P["fit_" + k] || 0) + n - tl; tl = n; };
   const { doc, res } = docInfo(docId);
   const layer = findLayer(doc, layerId);
   const pad = Math.max(0, Math.min(40, opts.paddingPct == null ? 8 : opts.paddingPct)) / 100;
@@ -225,8 +226,12 @@ async function fitToBox(docId, layerId, box, opts) {
   if (Math.abs(angle) > 0.01) await layer.rotate(-angle, constants.AnchorPosition.MIDDLECENTER);
   if (Math.abs(cur.scalePct - 100) > 0.5) await layer.scale(10000 / cur.scalePct, 10000 / cur.scalePct, constants.AnchorPosition.MIDDLECENTER);
   await ensureParagraph(docId, layerId);
+  lap("prep");
   // Ölçüm için kutuyu yüksek yap (taşan satırlar gizlenmesin)
-  await resizeBox(docId, layerId, innerW, Math.max(innerH * 6, 400));
+  // (kelime yoklaması yapılacaksa bu boyutlandırmayı yoklama zaten sonunda yapar → bir Photoshop çağrısı az)
+  const willProbe = !!(cur.rangeCount <= 1 && cur.contents && /\S\s+\S|\S{2,}/.test(cur.contents));
+  if (!willProbe) await resizeBox(docId, layerId, innerW, Math.max(innerH * 6, 400));
+  lap("resize1");
   // Ölçüm: seç + punto (ve satır aralığı) + sınır okuma TEK batchPlay çağrısında (3 gidiş-dönüş yerine 1)
   const measure = async (px) => {
     const op = { size: { _unit: "pointsUnit", _value: pxToPt(px, res) } };
@@ -234,6 +239,7 @@ async function fitToBox(docId, layerId, box, opts) {
       if (opts.leadingPct > 0) { op.autoLeading = false; op.leading = { _unit: "pointsUnit", _value: pxToPt(px * opts.leadingPct / 100, res) }; }
       else op.autoLeading = true;
     }
+    if (P) P.fit_measures = (P.fit_measures || 0) + 1;
     try {
       const r = await bp([
         { _obj: "select", _target: [{ _ref: "layer", _id: layerId }], makeVisible: false },
@@ -245,7 +251,7 @@ async function fitToBox(docId, layerId, box, opts) {
         const v = (x) => (x && typeof x === "object" ? x._value : x);
         return { h: v(bb.bottom) - v(bb.top), w: v(bb.right) - v(bb.left) };
       }
-    } catch (e) { /* aşağıdaki yavaş yola düş */ }
+    } catch (e) { if (P) P.fit_fastFail = (P.fit_fastFail || 0) + 1; }
     await applyStyle(docId, layerId, { sizePx: px, leadingPct: opts.leadingPct });
     const b = findLayer(doc, layerId).boundsNoEffects;
     return { h: b.bottom - b.top, w: b.right - b.left };
@@ -254,26 +260,27 @@ async function fitToBox(docId, layerId, box, opts) {
   // Kelime bölünmesin: en uzun kelimelerin genişliğini ölç, punto o kelime kutuya TEK satırda sığacak değeri aşmasın
   // (yalnızca tek biçimli katmanlarda; elle verilmiş karakter biçimleri bozulmasın diye)
   let wordLimited = false;
-  if (cur.rangeCount <= 1 && cur.contents && /\S\s+\S|\S{2,}/.test(cur.contents)) {
-    const words = cur.contents.split(/\s+/).filter(Boolean).sort((a, b) => b.length - a.length).slice(0, 2);
+  if (willProbe) {
+    // Metnin İÇERİĞİ değiştirilmez (DOM içerik ataması yavaş: öğe başına ~1,5 sn). Bunun yerine metin geniş kutuda TEK satır
+    // ölçülür; harf genişlik ağırlıklarıyla en uzun kelimenin genişliği tahmin edilir (%6 güvenlik payı).
+    const wgt = (s) => { let t = 0; for (const ch of s) t += /[MWmwŞĞ@%]/.test(ch) ? 1.3 : /[iIlı.,;:!'|1j]/.test(ch) ? 0.45 : /\s/.test(ch) ? 0.5 : /[A-ZÇĞİÖŞÜ0-9]/.test(ch) ? 1.1 : 1; return t; };
+    const lines = String(cur.contents).split(/\r|\n/).filter((x) => x.trim());
+    const lineW = lines.length ? Math.max(...lines.map(wgt)) : 0;
+    const wordW = Math.max(0, ...String(cur.contents).split(/\s+/).filter(Boolean).map(wgt));
     const PROBE = 100;
     let perPx = 0;
-    await resizeBox(docId, layerId, Math.max(innerW * 30, 4000), Math.max(innerH * 6, 400));
-    try {
-      for (const wd of words) {
-        layer.textItem.contents = wd;
-        const pm = await measure(PROBE); // tek çağrı: punto + sınır
-        perPx = Math.max(perPx, pm.w / PROBE);
-      }
-    } finally {
-      layer.textItem.contents = toPsText(cur.contents); // ölçüm hata verse de asıl metin geri yazılır
+    if (lineW > 0 && wordW > 0) {
+      await resizeBox(docId, layerId, Math.min(30000, Math.max(4000, lineW * PROBE * 1.4 + 200)), Math.max(innerH * 6, 400));
+      const pm = await measure(PROBE);
+      perPx = (pm.w / lineW) * wordW * 1.06 / PROBE; // en uzun kelimenin 1 px puntodaki genişliği
     }
-    await resizeBox(docId, layerId, innerW, Math.max(innerH * 6, 400));
+    await resizeBox(docId, layerId, innerW, Math.max(innerH * 6, 400)); // ölçüm kutusu (yüksek: taşan satır gizlenmesin)
     if (perPx > 0) {
       const wordMax = Math.floor((innerW * 0.97) / perPx);
       if (wordMax < hi) { hi = Math.max(lo, wordMax); wordLimited = true; }
     }
   }
+  lap("wordprobe");
   // Arama: yazı yüksekliği ≈ punto² ile büyür → karekökle tahmin (ikiye bölmeden çok daha az Photoshop ölçümü)
   let m = await measure(hi), lastPx = hi;
   if (m.h <= innerH && m.w <= innerW * 1.02) best = hi;
@@ -289,11 +296,13 @@ async function fitToBox(docId, layerId, box, opts) {
   const fin = Math.floor(best * 2) / 2;
   if (fin !== lastPx || !(m.h <= innerH)) m = await measure(fin);
   best = fin;
+  lap("search");
   const overflow = m.h > innerH * 1.03;
   // Son kutu: metni rahat kapsayacak yükseklik
   await resizeBox(docId, layerId, innerW, Math.max(innerH, m.h + best * 1.2));
   await moveCenterTo(docId, layerId, box.cx, box.cy);
   if (Math.abs(box.angle || 0) > 0.01) await findLayer(doc, layerId).rotate(box.angle, constants.AnchorPosition.MIDDLECENTER);
+  lap("finish");
   return { sizePx: best, overflow, textH: m.h, innerH };
 }
 

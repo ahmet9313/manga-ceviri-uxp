@@ -81,6 +81,7 @@ const App = {
     this.showTab(this.settings.ui.tab && $$(`.tab[data-tab="${this.settings.ui.tab}"]`).length ? this.settings.ui.tab : "items");
     this.renderModeLine();
     log("info", `Panel hazır (${Date.now() - T_START} ms)`);
+    try { require("./src/dev/showpanel")(); } catch (e) { /* paketlenmiş sürümde src/dev yok */ }
   },
 
   /** Eski ayar dosyalarını yeni yapıya taşır (tek seferlik, sessiz). */

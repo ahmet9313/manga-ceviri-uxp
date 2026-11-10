@@ -910,7 +910,7 @@ class Pipeline {
   }
 
   async fitItem(t, it, st, box) {
-    const res = await text.fitToBox(t.docId, it.layerId, box, { minPx: st.minSizePx, maxPx: st.maxSizePx, paddingPct: st.paddingPct, leadingPct: st.leadingPct });
+    const res = await text.fitToBox(t.docId, it.layerId, box, { minPx: st.minSizePx, maxPx: st.maxSizePx, paddingPct: st.paddingPct, leadingPct: st.leadingPct, prof: this.debug ? (this._prof = this._prof || {}) : null });
     it.overflow = res.overflow;
     it.fitSizePx = res.sizePx;
   }
@@ -1059,7 +1059,11 @@ class Pipeline {
       return merged;
     });
     if (result) await this._typesetPage(this.captureTarget(), "page", {});
-    this.hooks.notify(`Tam işlem: ${incoming.length} öğe${j.metadata && j.metadata.credits_used != null ? ", " + j.metadata.credits_used + " kredi" : ""}.`, "ok");
+    const sNow = this.store.session(t.docId), elig = sNow ? sNow.state.items.filter((i) => this.filtersAllow(i)) : [];
+    const notClean = elig.filter((i) => !i.status.cleaned).length, notSet = elig.filter((i) => !i.status.typeset).length;
+    const cr = j.metadata && j.metadata.credits_used != null ? ", " + j.metadata.credits_used + " kredi" : "";
+    if (notClean || notSet) this.hooks.notify(`Tam işlem EKSİK: ${elig.length} öğe${cr}. ${notClean ? notClean + " öğe temizlenemedi (Torii silmedi, yazı maskesi bulunamadı) — listede T işaretsiz; seçip 2 · Temizle ile tekrar deneyin. " : ""}${notSet ? notSet + " öğe dizilemedi." : ""}`, "warn");
+    else this.hooks.notify(`Tam işlem: ${elig.length} öğe temizlendi ve dizildi${cr}.`, "ok");
     return result;
   }
 

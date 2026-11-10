@@ -147,7 +147,7 @@ body { margin: 0; padding: 0; background: var(--bg); color: var(--text); font-si
 .item .meta { display: flex; flex-direction: row; align-items: center; margin-bottom: 2px; }
 .item .meta > * { flex-shrink: 0; margin-right: var(--s1); }
 .item .tr { font-size: var(--fs-md); color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.item .tr.empty { color: var(--muted); font-style: italic; }
+.item .tr.pending { color: var(--muted); font-style: italic; }
 .item .src { font-size: var(--fs-sm); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .item .del { width: 18px; height: 18px; border-radius: var(--r-sm); text-align: center; color: var(--muted); font-size: var(--fs-sm); padding-top: 1px; cursor: pointer; margin-left: 2px; }
 .item .del:hover, .item .del:focus { background: var(--danger-soft); color: var(--danger); }
@@ -169,11 +169,11 @@ body { margin: 0; padding: 0; background: var(--bg); color: var(--text); font-si
 .dropline { position: absolute; left: 0; right: 0; height: 2px; background: var(--accent); }
 
 /* boş durum */
-.empty { display: flex; flex-direction: column; align-items: center; text-align: center; padding: 28px var(--s4); color: var(--muted); }
-.empty > * { flex-shrink: 0; }
-.empty .big { font-size: 26px; color: var(--border-strong); margin-bottom: var(--s2); }
-.empty .title { font-size: var(--fs-lg); font-weight: bold; color: var(--text-2); margin-bottom: var(--s1); }
-.empty .btn { margin-top: var(--s3); }
+.empty-state { display: flex; flex-direction: column; align-items: center; text-align: center; padding: 28px var(--s4); color: var(--muted); }
+.empty-state > * { flex-shrink: 0; }
+.empty-state .big { font-size: 26px; color: var(--border-strong); margin-bottom: var(--s2); }
+.empty-state .title { font-size: var(--fs-lg); font-weight: bold; color: var(--text-2); margin-bottom: var(--s1); }
+.empty-state .btn { margin-top: var(--s3); }
 
 /* ================= KARTLAR (açılır-kapanır) ================= */
 .card { display: block; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg); padding: 10px var(--s3); margin-bottom: var(--s2); }
