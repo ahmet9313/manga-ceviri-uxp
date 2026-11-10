@@ -1,17 +1,19 @@
-// Seri profilleri, genel ayarlar, bölümler. Profiller anahtar İÇERMEZ; dışa aktarımda ayrıca temizlenir.
+// Ayarlar: tek çeviri/stil yapılandırması (settings.config) + genel ayarlar + bölümler.
+// Seri profili sistemi kaldırıldı (1.2.0): eski ayar dosyalarındaki profiller silinir, yapılandırma varsayılana döner.
+// Ayarlar anahtar İÇERMEZ (anahtarlar UXP Secure Storage'da).
 "use strict";
-const { uid, clone, redact } = require("../util/common");
-const { DEFAULT_STYLE } = require("./rules");
+const { uid, clone } = require("../util/common");
 
-/** Her yeni seride hazır gelen, düzenlenebilir SFX kuralı. Font/renk/kontur belirtilmez → orijinal görünüm + türe göre font. */
+/** Hazır gelen, düzenlenebilir SFX kuralı. Font/renk/kontur belirtilmez → orijinal görünüm + türe göre font. */
 function defaultSfxRule() {
   return { id: uid("r_"), name: "SFX (varsayılan)", enabled: true, priority: 5, types: ["sfx"], tones: [], match: "all", conditions: [],
     style: { fauxBold: true, uppercase: true, maxSizePx: 160, paddingPct: 2, fit: true } }; // min. punto: orijinal yazı boyundan (applyOriginalLook)
 }
 
-function defaultProfile(name) {
+/** Çeviri + stil + temizlik yapılandırması (eski "seri profili"nin yerini alır; tektir). */
+function defaultConfig() {
   return {
-    id: uid("p_"), name: name || "Yeni seri", targetLang: "tr", readingDir: "ltr",
+    sourceLang: "auto", targetLang: "tr", readingDir: "ltr",
     translator: "gemini-3.1-flash-lite", reasoning: "none",
     // Font bilerek boş: kural yoksa türe göre kurulu çizgi roman fontu seçilir (Diyalog / SFX ayrı)
     base: { sizePx: 28, minSizePx: 12, maxSizePx: 44, align: "center", fit: true, paddingPct: 10 },
@@ -35,30 +37,38 @@ function exampleRules(fonts) {
 }
 
 function defaultSettings() {
-  const p = defaultProfile("Varsayılan seri");
   return {
-    version: 1,
-    activeProfileId: p.id,
-    profiles: [p],
-    // Genel taban boş: değerler "Varsayılan" düzeyinden gelir, böylece türe göre görünüm (SFX, orijinal renk) devreye girebilir
-    global: { base: {}, rules: [] },
+    version: 2,
+    config: defaultConfig(),
     chapters: [],
     ui: { scope: "page", filters: { dialog: true, narration: true, offbubble: true, sfx: true }, bubblesOnly: false, fullMode: "modular", tab: "items", open: {} },
-    torii: { translator: "gemini-3.1-flash-lite", reasoning: "none", byokProvider: "", byokFallback: true },
+    torii: { byokProvider: "", byokFallback: true },
     cleanup: { preview: false, verified: {} },
     firefly: { proxyUrl: "" },
     adobe: { prompt: "" }, // Üretken Dolgu istemi (boş = yazıyı sil, zemini tamamla)
   };
 }
 
+/**
+ * Eski "seri profilleri" kaldırılır: profiller, "Genel" kurallar ve etkin profil kimliği SİLİNİR, değerleri taşınmaz
+ * (kullanıcı tercihi). Yapılandırma varsayılana döner (Torii: OCR, çeviri, temizlik). Dönüş: true = eski profil vardı.
+ */
+function migrateProfiles(S) {
+  if (!S || !("profiles" in S || "global" in S || "activeProfileId" in S)) return false;
+  delete S.profiles; delete S.activeProfileId; delete S.global;
+  if (S.torii) { delete S.torii.translator; delete S.torii.reasoning; }
+  S.config = defaultConfig();
+  return true;
+}
+
 /** Sözlük, karakterler ve talimattan Torii custom_prompt (≤1000) üretir. */
-function buildCustomPrompt(profile, chapter, extra) {
+function buildCustomPrompt(cfg, chapter, extra) {
   const parts = [];
-  if (profile.instruction) parts.push(profile.instruction.trim());
+  if (cfg.instruction) parts.push(cfg.instruction.trim());
   if (chapter && chapter.instruction) parts.push(chapter.instruction.trim());
-  if (profile.honorifics) parts.push("Hitap biçimi: " + profile.honorifics.trim());
+  if (cfg.honorifics) parts.push("Hitap biçimi: " + cfg.honorifics.trim());
   if (extra) parts.push(extra.trim());
-  const tr = !profile.targetLang || profile.targetLang === "tr";
+  const tr = !cfg.targetLang || cfg.targetLang === "tr";
   if (tr) parts.push("Türkçe imla kurallarına uy; ÇĞİÖŞÜ çğıöşü harflerini doğru kullan.");
   parts.push(tr ? "Ses efektlerini (SFX) anlamıyla değil, kısa Türkçe yansıma sözcükle çevir (ör. SNAP → ÇAT!, BANG → BAM!, THUD → GÜM!, HUH? → HA?). Kişi ve yer adlarını değiştirme."
     : "Translate sound effects (SFX) as short onomatopoeia of the target language, not literally. Keep person and place names.");
@@ -68,45 +78,21 @@ function buildCustomPrompt(profile, chapter, extra) {
 }
 
 /** Sözlük + karakter adları + önceki sayfa bağlamı → Torii context (≤10000, son kısım tutulur). */
-function buildContext(profile, chapter, chainContext) {
+function buildContext(cfg, chapter, chainContext) {
   const lines = [];
-  if (profile.characters && profile.characters.length) {
+  if (cfg.characters && cfg.characters.length) {
     lines.push("Karakterler:");
-    for (const c of profile.characters) lines.push(`- ${c.name}${c.tr ? " → " + c.tr : ""}${c.note ? " (" + c.note + ")" : ""}`);
+    for (const c of cfg.characters) lines.push(`- ${c.name}${c.tr ? " → " + c.tr : ""}${c.note ? " (" + c.note + ")" : ""}`);
   }
-  if (profile.glossary && profile.glossary.length) {
+  if (cfg.glossary && cfg.glossary.length) {
     lines.push("Seri sözlüğü (kaynak → hedef):");
-    for (const g of profile.glossary) lines.push(`- ${g.src} → ${g.tgt}${g.note ? " (" + g.note + ")" : ""}`);
+    for (const g of cfg.glossary) lines.push(`- ${g.src} → ${g.tgt}${g.note ? " (" + g.note + ")" : ""}`);
   }
   const head = lines.join("\n");
   const chain = chainContext ? String(chainContext) : "";
   let s = chain ? (head ? head + "\n\n" + chain : chain) : head;
   if (s.length > 10000) s = head.slice(0, 3000) + "\n…\n" + chain.slice(-(10000 - Math.min(3000, head.length) - 3));
   return s;
-}
-
-/** Profili dışa aktarmaya hazırla: kimlik ve gizli bilgi yok. */
-function exportProfile(profile) {
-  const p = clone(profile);
-  delete p.byokKey; delete p.apiKey;
-  return JSON.parse(redact(JSON.stringify({ format: "manga-ceviri-profil", version: 1, profile: p })));
-}
-
-function importProfile(json) {
-  const o = typeof json === "string" ? JSON.parse(json) : json;
-  const p = o && o.profile ? o.profile : o;
-  if (!p || typeof p !== "object" || !p.name) throw new Error("Geçersiz profil dosyası");
-  const base = defaultProfile(p.name);
-  const merged = Object.assign(base, p, { id: uid("p_") });
-  merged.rules = (merged.rules || []).map((r) => Object.assign({}, r, { id: uid("r_") }));
-  return merged;
-}
-
-function copyProfile(profile, newName) {
-  const p = clone(profile);
-  p.id = uid("p_"); p.name = newName || profile.name + " (kopya)";
-  p.rules = (p.rules || []).map((r) => Object.assign({}, r, { id: uid("r_") }));
-  return p;
 }
 
 // ---- Türkçe düzeltme ----
@@ -135,4 +121,4 @@ function sourceWhitelist(p) {
   return [s];
 }
 
-module.exports = { LANGS, sourceWhitelist, defaultSfxRule, defaultProfile, exampleRules, defaultSettings, buildCustomPrompt, buildContext, exportProfile, importProfile, copyProfile, applyTurkishFixes };
+module.exports = { LANGS, sourceWhitelist, defaultSfxRule, defaultConfig, exampleRules, defaultSettings, migrateProfiles, buildCustomPrompt, buildContext, applyTurkishFixes };

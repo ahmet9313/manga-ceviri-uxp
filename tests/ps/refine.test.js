@@ -7,7 +7,7 @@ const lfs = require("uxp").storage.localFileSystem;
 const out = { results: [] };
 const save = () => fs.writeFileSync(RESULT_PATH, JSON.stringify(out, null, 1));
 const api = R("../src/ps/api"), pixels = R("../src/ps/pixels"), geom = R("../src/util/geom");
-const profiles = R("../src/model/profiles");
+const conf = R("../src/model/config");
 const { Store, emptyState } = R("../src/model/store");
 const { Pipeline } = R("../src/pipeline");
 const { uid } = R("../src/util/common");
@@ -53,7 +53,7 @@ api.modal("Tür ve temizlik testi", async () => {
     inp.data[i * 3] = inp.data[i * 3 + 1] = inp.data[i * 3 + 2] = 255;
   }
   // Oturum + Torii benzeri öğeler: çeviri kutusu = orijinal yazının %65'i (üst kısma kaymış)
-  const store = new Store(); store.settings = profiles.defaultSettings(); store.settings.fontChecks = {};
+  const store = new Store(); store.settings = conf.defaultSettings(); store.settings.fontChecks = {};
   const P = new Pipeline(store, null, { confirm: async () => 0, notify: () => {}, progress: () => {}, preview: async () => true });
   P.debug = true; // teşhis maskeleri (_lastMasks) yalnız geliştirici/test modunda tutulur
   const s = store.attach(doc.id, doc.title, emptyState()); store.activeDocId = doc.id;

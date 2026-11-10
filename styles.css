@@ -63,6 +63,7 @@ body { margin: 0; padding: 0; background: var(--bg); color: var(--text); font-si
 .ctl-profile { flex: 1 1 140px !important; min-width: 0; margin-right: var(--s2); }
 .ctl-profile select { flex: 1 1 auto !important; min-width: 0; }
 .ctl-scope { flex: 1 1 220px !important; min-width: 0; }
+.ctl-scope .ctl-label { width: auto; }
 .ctl-label { font-size: var(--fs-sm); color: var(--muted); margin-right: 6px; }
 
 /* segmentli seçici */

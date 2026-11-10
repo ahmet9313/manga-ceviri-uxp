@@ -113,7 +113,7 @@ function ruleMatches(rule, item, f) {
 }
 
 /**
- * levels: [{level:'chapter'|'series'|'global', label, rules[], base{}}] (yüksekten düşüğe)
+ * levels: [{level:"chapter"|"settings", label, rules[], base{}}] (yüksekten düşüğe)
  * → { style, sources: {field: {level, label, rule}} }
  */
 function resolveStyle(item, levels, pageStats) {
@@ -139,6 +139,6 @@ function resolveStyle(item, levels, pageStats) {
   return { style, sources };
 }
 
-const LEVEL_LABEL = { manual: "Manuel", chapter: "Bölüm", series: "Seri", global: "Genel", default: "Varsayılan", ocr: "OCR" };
+const LEVEL_LABEL = { manual: "Manuel", chapter: "Bölüm", settings: "Ayarlar", series: "Seri", global: "Genel", default: "Varsayılan", ocr: "OCR" };
 
 module.exports = { ITEM_TYPES, TONES, STYLE_FIELDS, DEFAULT_STYLE, CONDITION_FIELDS, OPERATORS, featuresOf, testCondition, ruleMatches, resolveStyle, LEVEL_LABEL };

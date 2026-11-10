@@ -33,7 +33,7 @@ Arayüz Türkçe, varsayılan hedef dil `tr`. Manifest v5, Adobe UXP.
 1. https://toriitranslate.com/api sayfasından anahtar oluşturun (`sk_torii_…`). Anahtar yalnızca oluşturulduğunda tam gösterilir;
    panelde maskeli görünen `sk_torii_abcde…wxyz` biçimi **çalışmaz**.
 2. Panel › **Ayarlar** › *Torii API* → anahtarı yapıştırıp **Kaydet** (otomatik doğrulanır, kalan kredi görünür).
-3. Anahtar **UXP Secure Storage**'da saklanır; ayar dosyasına, profil dışa aktarımına ve loglara yazılmaz (loglarda `sk_torii_****`).
+3. Anahtar **UXP Secure Storage**'da saklanır; ayar dosyasına ve loglara yazılmaz (loglarda `sk_torii_****`).
 
 Kullanılan uç noktalar (Kasım 2026 dokümanına göre):
 
@@ -63,8 +63,8 @@ listesine ekleyin. Vekil doğrulanmadıkça Firefly seçenekleri panelde "kurulu
 
 ## 3. Kullanım
 
-**Üst şerit:** belge adı ve durum özeti · kalan kredi (tıklayınca yenilenir) · seri profili · kapsam (*Seçili / Bölge / Sayfa / Bölüm*).
-**Sekmeler:** Öğeler · Bölüm · Profil · Temizlik · Ayarlar (Log, Eylemler, BYOK, Firefly → *Ayarlar › Gelişmiş*).
+**Üst şerit:** belge adı ve durum özeti · kalan kredi (tıklayınca yenilenir) · kapsam (*Seçili / Bölge / Sayfa / Bölüm*).
+**Sekmeler:** Öğeler · Bölüm · Temizlik · Ayarlar (Log, Eylemler, BYOK, Firefly → *Ayarlar › Gelişmiş*).
 **Alt şerit:** çalışırken adım adı + geçen süre + ilerleme + **■ Durdur** (Esc); sonuç satırı (süre, harcanan kredi, kullanılan yöntem);
 adımlar **1 Tespit › 2 Temizle › 3 Çevir › 4 Dizgi**; tam genişlik **▶ Tam İşlem**; Tam İşlem modu ve son çalıştırmanın maliyeti.
 Bir işlem sürerken diğer düğmeler kilitlidir (sekmeler ve görünüm değişebilir).
@@ -87,13 +87,14 @@ satırında ve öğenin editöründe yazar. Her yöntemde sonuç ayrı katmanda 
 **Öğeler sekmesi:** tür çipleri (Diyalog yeşil · Anlatım sarı · Balon dışı mavi · SFX pembe) neyin işleneceğini seçer. Liste ↔ editör
 arasındaki ayırıcı sürüklenir (bırakınca uygulanır; çift tık = varsayılan; ← →). Dar panelde *Liste / Editör* geçişi.
 Klavye: ↑↓ gez · Alt+↑↓ sırala · Delete sil · Enter editör · Esc seçimi bırak. Sıralama yalnızca ⋮⋮ tutamacından sürüklenir.
-Editör: çeviri/kaynak, tür, ton, sıra, kilitler; Biçim (her alanın kaynağı: Manuel · Bölüm · Seri · Genel · Varsayılan); Tuval (taşı/döndür/kutu
+Editör: çeviri/kaynak, tür, ton, sıra, kilitler; Biçim (her alanın kaynağı: Manuel · Bölüm · Ayarlar · Varsayılan); Tuval (taşı/döndür/kutu
 pedleri — bırakınca tek geçmiş adımı, Esc iptal); Katman ve temizlik (kullanılan yöntem ve nedeni).
 
 **Photoshop'ta elle değişiklik:** metin aracıyla yaptığınız yazı/biçim değişiklikleri panele döner ve toplu dizgide **manuel değer** olarak korunur.
 
-**Profil:** dil (kaynak dil seçilirse başka dildeki yazılar ne çevrilir ne silinir), okuma yönü, çeviri modeli, talimat, sözlük, karakterler,
-taban stil, kurallar (*tür + ton + koşul → stil*), Türkçe düzeltme ve glif testi. Dışa aktarılan profil anahtar içermez.
+**Ayarlar:** yalnızca gerekenler — Torii API anahtarı; dil (kaynak dil seçilirse başka dildeki yazılar ne çevrilir ne silinir), okuma yönü,
+çeviri modeli; isteğe bağlı talimat ve sözlük/karakter adları; Tam İşlem modu; Gelişmiş (BYOK, Firefly, Eylemler, Log).
+Seri profili sistemi yoktur (1.2.0): yazı stili türe göre otomatik seçilir (kurulu çizgi roman fontu, orijinal renk/kontur, SFX için büyük ve kalın).
 **Bölüm:** açık belgelerden / klasörden bölüm, bölüm kuralları, sayfadan sayfaya bağlam, önizlemeli bul-değiştir.
 
 ## 4. Kalıcılık
@@ -107,7 +108,7 @@ src/torii/client.js     Torii istemcisi (multipart, hız sınırı, geri çekilm
 src/pipeline.js         Tespit/Temizle/Çevir/Dizgi/Tam işlem × kapsam × filtre, belge güvenliği, bölüm
 src/ops.js              Editör işlemleri, PS↔panel eşitleme, tek adımlı sürükleme oturumu, Actions
 src/ps/*                batchPlay/DOM sarmalayıcıları (PS 27.11'de doğrulanan tanımlayıcılar), metin, piksel, XMP
-src/model/*             kurallar ve öncelik, profiller, sınıflandırma, temizlik analizi, durum deposu
+src/model/*             kurallar ve öncelik, ayarlar (config.js), sınıflandırma, temizlik analizi, durum deposu
 src/ui/*                liste (tutamaçlı sıralama), editör, sekmeler, diyaloglar
 server/firefly-proxy.mjs  Firefly Services vekili
 tests/ps/               Photoshop içinde koşan testler · tests/logic/ Photoshop'suz mantık testleri

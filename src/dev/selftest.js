@@ -6,7 +6,7 @@ const pixels = require("../ps/pixels");
 const text = require("../ps/text");
 const geom = require("../util/geom");
 const storage = require("../model/storage");
-const profiles = require("../model/profiles");
+const conf = require("../model/config");
 const { log } = require("../util/common");
 
 async function runLive(app, opts) {
@@ -22,7 +22,7 @@ async function runLive(app, opts) {
   };
   const assert = (c, m) => { if (!c) throw new Error(m); };
   try { rep.env.ps = require("photoshop").app.version; rep.env.uxp = require("uxp").versions; } catch (e) { /* yok */ }
-  const saved = { bubblesOnly: S.ui.bubblesOnly, filters: Object.assign({}, S.ui.filters), active: S.activeProfileId };
+  const saved = { bubblesOnly: S.ui.bubblesOnly, filters: Object.assign({}, S.ui.filters) };
 
   let t = P.captureTarget();
   const sess = app.store.session(t.docId);
@@ -97,30 +97,6 @@ async function runLive(app, opts) {
     return fx;
   });
 
-  await step("İki seri profili aynı sayfada farklı font uygular", async () => {
-    const installed = P.fontSet();
-    const fa = "ArialMT", fb = installed && installed.has("TimesNewRomanPSMT") ? "TimesNewRomanPSMT" : "Georgia";
-    const pa = profiles.defaultProfile("Canlı Test A"); pa.base.font = fa;
-    const pb = profiles.defaultProfile("Canlı Test B"); pb.base.font = fb;
-    S.profiles.push(pa, pb);
-    const old = sess.state.profileId;
-    try {
-      const res = {};
-      for (const p of [pa, pb]) {
-        sess.state.profileId = p.id;
-        for (const i of sess.state.items) { i.lastApplied = null; i.manual = {}; }
-        await P._typesetPage(t, "page", {});
-        const i = sess.state.items.find((x) => x.layerId != null && x.tone === "normal") || sess.state.items.find((x) => x.layerId != null);
-        res[p.name] = (await text.readTextLayer(t.docId, i.layerId)).font;
-      }
-      assert(res["Canlı Test A"] === fa && res["Canlı Test B"] === fb, JSON.stringify(res));
-      return res;
-    } finally {
-      sess.state.profileId = old;
-      S.profiles = S.profiles.filter((p) => p !== pa && p !== pb);
-    }
-  });
-
   if (opts.fullSingle) {
     await step("Tam İşlem tek istek (POST /api/v2/upload file) — yeni kopya belgede", async () => {
       await modal("kopya", () => bp({ _obj: "duplicate", _target: [{ _ref: "document", _id: t.docId }], name: "MCS_live_full", merged: true }), {});
@@ -136,7 +112,7 @@ async function runLive(app, opts) {
 
   await step("Kredi kullanımı", async () => { const c = await app.client.credits(); rep.creditsEnd = c; return { start: rep.creditsStart, end: c, used: Math.round((rep.creditsStart - c) * 1000) / 1000 }; });
 
-  S.ui.bubblesOnly = saved.bubblesOnly; S.ui.filters = saved.filters; S.activeProfileId = saved.active;
+  S.ui.bubblesOnly = saved.bubblesOnly; S.ui.filters = saved.filters;
   rep.finished = new Date().toISOString();
   rep.summary = { pass: rep.steps.filter((s) => s.status === "PASS").length, fail: rep.steps.filter((s) => s.status === "FAIL").length };
   await storage.writeJson("selftest-report.json", rep);

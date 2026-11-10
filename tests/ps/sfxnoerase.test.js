@@ -7,7 +7,7 @@ const out = { results: [] };
 const save = () => fs.writeFileSync(RESULT_PATH, JSON.stringify(out, null, 1));
 const t_ = (name, ok, extra) => { out.results.push(Object.assign({ name, status: ok ? "PASS" : "FAIL" }, extra || {})); save(); };
 const api = R("../src/ps/api"), pixels = R("../src/ps/pixels"), geom = R("../src/util/geom");
-const profiles = R("../src/model/profiles");
+const conf = R("../src/model/config");
 const { Store, emptyState } = R("../src/model/store");
 const { Pipeline } = R("../src/pipeline");
 const { uid } = R("../src/util/common");
@@ -16,7 +16,7 @@ api.modal("SFX temizlik testi", async () => {
   for (const d of app.documents.slice()) if (String(d.title).indexOf("MCS_") === 0) await d.closeWithoutSaving();
   await app.open(await lfs.getEntryWithUrl("file:" + ASSET_PATH));
   const doc = app.activeDocument, W = doc.width, H = doc.height;
-  const store = new Store(); store.settings = profiles.defaultSettings(); store.settings.fontChecks = {}; store.settings.cleanup.preview = false;
+  const store = new Store(); store.settings = conf.defaultSettings(); store.settings.fontChecks = {}; store.settings.cleanup.preview = false;
   const asked = [];
   const P = new Pipeline(store, null, { confirm: async (title) => { asked.push(title); return 0; }, notify: () => {}, progress: () => {}, preview: async () => true, busy: () => {} });
   const s = store.attach(doc.id, doc.title, emptyState()); store.activeDocId = doc.id;

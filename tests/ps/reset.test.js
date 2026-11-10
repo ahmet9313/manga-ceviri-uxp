@@ -8,7 +8,7 @@ const out = { results: [] };
 const save = () => fs.writeFileSync(RESULT_PATH, JSON.stringify(out, null, 1));
 const t_ = (name, ok, extra) => { out.results.push(Object.assign({ name, status: ok ? "PASS" : "FAIL" }, extra || {})); save(); };
 const api = R("../src/ps/api"), pixels = R("../src/ps/pixels"), geom = R("../src/util/geom");
-const profiles = R("../src/model/profiles");
+const conf = R("../src/model/config");
 const { Store, emptyState } = R("../src/model/store");
 const { Pipeline } = R("../src/pipeline");
 const { Ops } = R("../src/ops");
@@ -21,7 +21,7 @@ api.modal("Silme testi", async () => {
   for (const d of app.documents.slice()) if (String(d.title).indexOf("MCS_") === 0) await d.closeWithoutSaving();
   await app.open(await lfs.getEntryWithUrl("file:" + ASSET_PATH));
   const doc = app.activeDocument;
-  const store = new Store(); store.settings = profiles.defaultSettings(); store.settings.fontChecks = {};
+  const store = new Store(); store.settings = conf.defaultSettings(); store.settings.fontChecks = {};
   const P = new Pipeline(store, null, { confirm: async () => 0, notify: () => {}, progress: () => {}, preview: async () => true, busy: () => {} });
   const ops = new Ops(store, P, {});
   const s = store.attach(doc.id, doc.title, emptyState()); store.activeDocId = doc.id;

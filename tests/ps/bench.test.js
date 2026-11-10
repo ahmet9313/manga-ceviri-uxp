@@ -8,7 +8,7 @@ const save = () => fs.writeFileSync(RESULT_PATH, JSON.stringify(out, null, 1));
 const api = R("../src/ps/api"), pixels = R("../src/ps/pixels"), geom = R("../src/util/geom");
 const png = R("../src/util/png");
 const { base64Encode } = R("../src/util/bytes");
-const profiles = R("../src/model/profiles");
+const conf = R("../src/model/config");
 const { Store, emptyState } = R("../src/model/store");
 const { Pipeline } = R("../src/pipeline");
 R("../src/ps/adobe").generativeFill = async () => { throw new Error("test: Üretken Dolgu kullanılamıyor"); }; // kredi koruması // kredi koruması
@@ -81,7 +81,7 @@ async function freshDoc() {
 }
 
 function makeEnv(doc, client) {
-  const store = new Store(); store.settings = profiles.defaultSettings(); store.settings.fontChecks = {};
+  const store = new Store(); store.settings = conf.defaultSettings(); store.settings.fontChecks = {};
   const notes = [];
   const P = new Pipeline(store, client, { confirm: async () => 0, notify: (m, k) => notes.push(m), progress: () => {}, preview: async () => true, ambiguous: async () => false, busy: () => {} });
   store.attach(doc.id, doc.title, emptyState()); store.activeDocId = doc.id;

@@ -13,7 +13,7 @@ const pixels = R("../src/ps/pixels");
 const text = R("../src/ps/text");
 const geom = R("../src/util/geom");
 const cleanup = R("../src/model/cleanup");
-const profiles = R("../src/model/profiles");
+const conf = R("../src/model/config");
 const { Store, emptyState } = R("../src/model/store");
 const { Pipeline } = R("../src/pipeline");
 const { Ops } = R("../src/ops");
@@ -67,7 +67,7 @@ async function openTestPage() {
 
 function makeEnv(docId, title) {
   const store = new Store();
-  store.settings = profiles.defaultSettings();
+  store.settings = conf.defaultSettings();
   store.settings.fontChecks = {};
   const notes = [];
   const pipeline = new Pipeline(store, null, { confirm: async () => 0, notify: (m, k) => notes.push((k || "") + ": " + m), progress: () => {}, preview: async () => true, ambiguous: async () => false, openPage: async () => {} });
@@ -111,21 +111,21 @@ api.modal("Kabul testleri", async () => {
   const fontA = pickFont(["ArialMT"]), fontAShout = pickFont(["Impact", "Arial-BoldMT"]), fontASfx = pickFont(["Impact", "Arial-BlackMT", "Arial-BoldMT"]);
   const fontB = pickFont(["TimesNewRomanPSMT", "Georgia", "Cambria"]), fontBShout = pickFont(["Georgia-Bold", "TimesNewRomanPS-BoldMT", "Cambria-Bold"]), fontBSfx = pickFont(["ComicSansMS-Bold", "ComicSansMS", "Verdana-Bold"]);
   const S = store.settings;
-  const pA = S.profiles[0]; pA.name = "Seri A";
+  // Tek yapılandırma (Ayarlar). A ve B iki stil seti; test 8'de Ayarlar'a sırayla uygulanır.
+  const pA = { base: null, rules: null };
   pA.base = { font: fontA, sizePx: 26, minSizePx: 12, maxSizePx: 40, fit: true, paddingPct: 10 };
   pA.rules = [
     { id: "a1", name: "Bağırma A", enabled: true, priority: 50, types: ["dialog"], tones: ["shout"], match: "all", conditions: [], style: { font: fontAShout, strokeEnabled: true, strokeSize: 4, strokeColor: "#ffffff" } },
     { id: "a2", name: "SFX A", enabled: true, priority: 30, types: ["sfx"], tones: [], match: "all", conditions: [], style: { font: fontASfx, maxSizePx: 110, shadowEnabled: true } },
   ];
-  const pB = profiles.defaultProfile("Seri B");
+  const pB = { base: null, rules: null };
   pB.base = { font: fontB, sizePx: 26, minSizePx: 12, maxSizePx: 40, fit: true };
   pB.rules = [
     { id: "b1", name: "Bağırma B", enabled: true, priority: 50, types: ["dialog"], tones: ["shout"], match: "all", conditions: [], style: { font: fontBShout } },
     { id: "b2", name: "SFX B", enabled: true, priority: 30, types: ["sfx"], tones: [], match: "all", conditions: [], style: { font: fontBSfx } },
   ];
-  S.profiles.push(pB);
-  S.activeProfileId = pA.id;
-  sess.state.profileId = pA.id;
+  const useStyle = (p) => { S.config.base = p.base; S.config.rules = p.rules; };
+  useStyle(pA);
   out.fonts = { fontA, fontAShout, fontASfx, fontB, fontBShout, fontBSfx };
 
   stage("ortam hazır");
@@ -216,7 +216,7 @@ api.modal("Kabul testleri", async () => {
     assert(L, "temizlik katmanı var");
     assert(L.parent && L.parent.id === sess.state.groups.clean, "temizlik katmanı Temizlik grubunda");
     const area = cleanup.itemArea(it, { left: 0, top: 0, right: doc.width, bottom: doc.height }, 24);
-    const mk = cleanup.itemMask(it, area, store.settings.profiles[0].cleanup.dilatePx);
+    const mk = cleanup.itemMask(it, area, store.settings.config.cleanup.dilatePx);
     // Çeviri grubunu gizleyerek orijinal ve (orijinal+temizlik) bileşimlerini karşılaştır
     const orig = await api.modal("o", () => pixels.readOriginal(docId, area, [sess.state.groups.clean, sess.state.groups.trans]), { documentID: docId, historyName: "o", discard: true });
     const withClean = await api.modal("c", () => pixels.readOriginal(docId, area, [sess.state.groups.trans]), { documentID: docId, historyName: "c", discard: true });
@@ -261,14 +261,14 @@ api.modal("Kabul testleri", async () => {
     const info = await text.readTextLayer(docId, shout.layerId);
     assert(info.font === fontAShout, `bağırma fontu ${info.font} ≠ ${fontAShout}`);
     const r = pipeline.resolveFor(sess.state, shout);
-    assert(r.sources.font.rule === "Bağırma A" && r.sources.font.level === "series", "kaynak etiketi " + JSON.stringify(r.sources.font));
+    assert(r.sources.font.rule === "Bağırma A" && r.sources.font.level === "settings", "kaynak etiketi " + JSON.stringify(r.sources.font));
     const fx = await text.readStrokeShadow(docId, shout.layerId);
     return { font: info.font, source: r.sources.font, strokeApplied: fx.strokeEnabled, note: fx.strokeEnabled ? "" : "kontur bu bağlamda uygulanamadı (betik bağlamında -25920 beklenir; eklenti panelinde ayrıca doğrulanmalı)" };
   });
 
-  await test("8. Aynı sayfaya iki seri profili: doğru fontlar", async () => {
-    // Profil B'yi uygula: stil kilidi yok, manuel değer yok → fontlar B olmalı
-    sess.state.profileId = pB.id;
+  await test("8. Ayarlar stili değişince dizgi doğru fontları uygular (A → B → A)", async () => {
+    // B stilini uygula: stil kilidi yok, manuel değer yok → fontlar B olmalı
+    useStyle(pB);
     for (const it of sess.state.items) { it.lastApplied = null; it.manual = {}; }
     await pipeline._typesetPage(t(), "page", {});
     const got = {};
@@ -278,12 +278,12 @@ api.modal("Kabul testleri", async () => {
     assert((await text.readTextLayer(docId, shout.layerId)).font === fontBShout, "B bağırma fontu");
     assert((await text.readTextLayer(docId, normal.layerId)).font === fontB, "B normal fontu");
     // Geri A
-    sess.state.profileId = pA.id;
+    useStyle(pA);
     for (const it of sess.state.items) { it.lastApplied = null; it.manual = {}; }
     await pipeline._typesetPage(t(), "page", {});
     const backA = (await text.readTextLayer(docId, normal.layerId)).font;
     assert(backA === fontA, "A'ya dönüş fontu " + backA);
-    return { profileB: got, backToA: backA };
+    return { styleB: got, backToA: backA };
   });
 
   await test("9. Elle düzenleme korunur: Photoshop'ta font/metin değişikliği → toplu dizgi ezmez", async () => {
@@ -445,7 +445,7 @@ api.modal("Kabul testleri", async () => {
   });
 
   await test("17. â/Â → a/A seçeneği diğer Türkçe harfleri korur", async () => {
-    const s = profiles.applyTurkishFixes("Hâlâ kâğıt ÂLEM ğüşıöç İ...", { enabled: true, circumflexToPlain: true, smartPunct: true });
+    const s = conf.applyTurkishFixes("Hâlâ kâğıt ÂLEM ğüşıöç İ...", { enabled: true, circumflexToPlain: true, smartPunct: true });
     assert(s === "Hala kağıt ALEM ğüşıöç İ…", s);
     return s;
   });

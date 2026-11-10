@@ -8,7 +8,7 @@ const save = () => fs.writeFileSync(RESULT_PATH, JSON.stringify(out, null, 1));
 const t_ = (name, ok, extra) => { out.results.push(Object.assign({ name, status: ok ? "PASS" : "FAIL" }, extra || {})); save(); };
 const api = R("../src/ps/api"), pixels = R("../src/ps/pixels"), geom = R("../src/util/geom"), png = R("../src/util/png");
 const { base64Encode } = R("../src/util/bytes");
-const profiles = R("../src/model/profiles");
+const conf = R("../src/model/config");
 const { Store, emptyState } = R("../src/model/store");
 const { Pipeline } = R("../src/pipeline");
 const { uid } = R("../src/util/common");
@@ -21,7 +21,7 @@ async function scenario(label, setup) {
   for (const d of app.documents.slice()) if (String(d.title).indexOf("MCS_") === 0) await d.closeWithoutSaving();
   await app.open(await lfs.getEntryWithUrl("file:" + ASSET_PATH));
   const doc = app.activeDocument, W = doc.width, H = doc.height;
-  const store = new Store(); store.settings = profiles.defaultSettings(); store.settings.fontChecks = {};
+  const store = new Store(); store.settings = conf.defaultSettings(); store.settings.fontChecks = {};
   // Sahte Torii: inpaint maskeli alanı açık griyle doldurur
   const client = { lastCredits: 100, async inpaint(image, mask) {
     const im = png.decodePng(image.bytes), mk = png.decodePng(mask.bytes);

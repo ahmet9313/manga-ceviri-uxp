@@ -13,7 +13,7 @@ const { log, clone } = require("./util/common");
 const classify = require("./model/classify");
 const cleanup = require("./model/cleanup");
 const { resolveStyle, STYLE_FIELDS } = require("./model/rules");
-const profiles = require("./model/profiles");
+const conf = require("./model/config");
 const { pushHistory } = require("./model/store");
 const { AmbiguousRequestError, estimateCredits } = require("./torii/client");
 
@@ -35,10 +35,8 @@ class Pipeline {
   }
 
   get settings() { return this.store.settings; }
-  profile(state) {
-    const id = (state && state.profileId) || this.settings.activeProfileId;
-    return this.settings.profiles.find((p) => p.id === id) || this.settings.profiles[0];
-  }
+  /** Tek çeviri/stil yapılandırması (Ayarlar). Seri profili sistemi yoktur. */
+  cfg() { return this.settings.config; }
   chapter(state) { return state && state.chapterId ? this.settings.chapters.find((c) => c.id === state.chapterId) || null : null; }
 
   // ------------------------------------------------------------------ yardımcılar
@@ -245,7 +243,7 @@ class Pipeline {
     const crop = { left: img.bounds.left, top: img.bounds.top, scale: 1 };
     let incoming = classify.itemsFromOcr(paras, crop);
     // Profilde kaynak dil seçiliyse başka dildeki yazılar (ör. arka plandaki Korece) öğe olmaz → çevrilmez, SİLİNMEZ
-    const wl = profiles.sourceWhitelist(this.profile(this.store.session(t.docId).state));
+    const wl = conf.sourceWhitelist(this.cfg());
     if (wl) { const before = incoming.length; incoming = incoming.filter((i) => !i.sourceLang || wl.includes(i.sourceLang.toLowerCase()) || wl.includes(i.sourceLang.toLowerCase().split("-")[0])); if (before !== incoming.length) log("info", `Kaynak dil filtresi: ${before - incoming.length} başka dildeki yazı atlandı`); }
     this.refineTypes(incoming, img, false, { W: t.w, H: t.h }); // tür önerisini zemin piksellerine göre düzelt
     return this.applyOrDefer(t, "Tespit sonuçları", async (sess) => {
@@ -318,7 +316,7 @@ class Pipeline {
   }
 
   reorderByReading(sess) {
-    const prof = this.profile(sess.state);
+    const prof = this.cfg();
     const items = sess.state.items;
     if (sess.state.orderEdited) {
       // Kullanıcı sırayı elle değiştirdiyse mevcut sıra korunur; yeniler okuma sırasıyla sona eklenir.
@@ -347,15 +345,15 @@ class Pipeline {
       return opts.force || !i.status.translated || !i.translation;
     });
     if (!todo.length) { this.hooks.notify("Çevrilecek öğe yok (kilitli, onaylı veya zaten çevrilmiş).", "info"); return null; }
-    const prof = this.profile(s.state), ch = this.chapter(s.state);
+    const prof = this.cfg(), ch = this.chapter(s.state);
     const tset = this.settings.torii;
     const req = {
       target_lang: prof.targetLang || "tr",
-      source_langs_whitelist: profiles.sourceWhitelist(prof),
+      source_langs_whitelist: conf.sourceWhitelist(prof),
       translator: prof.translator || tset.translator,
       reasoning_effort: prof.reasoning || tset.reasoning,
-      custom_prompt: profiles.buildCustomPrompt(prof, ch, opts.extraInstruction),
-      context: profiles.buildContext(prof, ch, s.state.chainContext || (ch && ch.chainContext) || ""),
+      custom_prompt: conf.buildCustomPrompt(prof, ch, opts.extraInstruction),
+      context: conf.buildContext(prof, ch, s.state.chainContext || (ch && ch.chainContext) || ""),
       byok: await this.byok(),
     };
     this.progress(`Çeviri (${todo.length} metin)…`, 0.4);
@@ -366,7 +364,7 @@ class Pipeline {
       todo.forEach((it, k) => {
         const live = sess.state.items.find((x) => x.id === it.id);
         if (!live || live.locks.text) return;
-        live.translation = profiles.applyTurkishFixes(j.text[k], prof.turkish);
+        live.translation = conf.applyTurkishFixes(j.text[k], prof.turkish);
         live.status.translated = true;
         live.translatedAt = Date.now();
       });
@@ -396,7 +394,7 @@ class Pipeline {
 
   async _cleanPage(t, scope, opts) {
     const s = this.store.session(t.docId);
-    const prof = this.profile(s.state);
+    const prof = this.cfg();
     const docRect = { left: 0, top: 0, right: t.w, bottom: t.h };
     let items = opts.objectRemoval ? [] : (await this.scopeItems(scope, t)).filter((i) => this.filtersAllow(i));
     if (opts.itemIds) items = s.state.items.filter((i) => opts.itemIds.includes(i.id));
@@ -587,7 +585,7 @@ class Pipeline {
    * Üretken Dolgu bu panel oturumunda bir kez başarısız olursa oturum boyunca tekrar denenmez (her deneme zaman kaybı).
    */
   sfxMethod() {
-    const prof = this.profile(this.store.active && this.store.active.state);
+    const prof = this.cfg();
     const pref = (prof.cleanup && prof.cleanup.sfxMethod) || "auto";
     if (pref === "auto" || pref === "adobeGenerative") return this._adobeFail ? "contentAware" : "adobeGenerative";
     return pref;
@@ -742,11 +740,10 @@ class Pipeline {
   }
 
   styleLevels(state) {
-    const prof = this.profile(state), ch = this.chapter(state);
+    const prof = this.cfg(), ch = this.chapter(state);
     return [
       ch ? { level: "chapter", label: "Bölüm: " + ch.name, rules: ch.rules || [], base: ch.base || {} } : null,
-      { level: "series", label: "Seri: " + prof.name, rules: prof.rules || [], base: prof.base || {} },
-      { level: "global", label: "Genel", rules: this.settings.global.rules || [], base: this.settings.global.base || {} },
+      { level: "settings", label: "Ayarlar", rules: prof.rules || [], base: prof.base || {} },
     ];
   }
 
@@ -1023,7 +1020,7 @@ class Pipeline {
   /** Tek istek: v2/upload (dosya) → inpainted + text[]; temizlik, yalnızca öğe bölgelerindeki farkla uygulanır. */
   async _fullSingleRequest(t) {
     const s = this.store.session(t.docId);
-    const prof = this.profile(s.state), ch = this.chapter(s.state);
+    const prof = this.cfg(), ch = this.chapter(s.state);
     const area = { left: 0, top: 0, right: t.w, bottom: t.h };
     this.progress("Görüntü okunuyor…", 0.05);
     const img = await this.readOriginalArea(t, area);
@@ -1031,8 +1028,8 @@ class Pipeline {
     this.progress("Torii görsel çeviri…", 0.25);
     const byok = await this.byok();
     const opts = {
-      target_lang: prof.targetLang || "tr", source_langs_whitelist: profiles.sourceWhitelist(prof), translator: prof.translator, reasoning_effort: prof.reasoning,
-      custom_prompt: profiles.buildCustomPrompt(prof, ch), context: profiles.buildContext(prof, ch, s.state.chainContext || (ch && ch.chainContext) || ""),
+      target_lang: prof.targetLang || "tr", source_langs_whitelist: conf.sourceWhitelist(prof), translator: prof.translator, reasoning_effort: prof.reasoning,
+      custom_prompt: conf.buildCustomPrompt(prof, ch), context: conf.buildContext(prof, ch, s.state.chainContext || (ch && ch.chainContext) || ""),
       min_font_size: 10,
     };
     // Ücretli yanıt önbelleği: aynı görsel + aynı seçenekler → önceki yanıt (kredi harcanmaz)
@@ -1040,7 +1037,7 @@ class Pipeline {
       `img|${bytesKey(bytes)}|${JSON.stringify(opts)}|${byok ? byok.provider : ""}`);
     if (!j || !Array.isArray(j.text)) throw new Error("Torii görsel çeviri yanıtında metin listesi yok (kredi harcanmış olabilir; yanıt önbellekte, tekrar denemek ücretsiz).");
     const incoming = classify.itemsFromUpload(j.text, { left: 0, top: 0, scale: 1 });
-    incoming.forEach((i) => { i.translation = profiles.applyTurkishFixes(i.translation, prof.turkish); });
+    incoming.forEach((i) => { i.translation = conf.applyTurkishFixes(i.translation, prof.turkish); });
     this.progress("Temizlenmiş görsel çözülüyor…", 0.5);
     const inp = j.inpainted ? await this.decodeImage(j.inpainted, "Temizlenmiş görsel (inpainted)") : null;
     if (inp && (inp.width !== t.w || inp.height !== t.h)) throw new Error("Temizlenmiş görsel boyutu belgeyle uyuşmuyor.");

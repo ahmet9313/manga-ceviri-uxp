@@ -6,7 +6,7 @@ const { app: psApp, action, modal, activeDoc, getDoc, findLayer } = require("./s
 const docs = require("./src/ps/document");
 const pixels = require("./src/ps/pixels");
 const storage = require("./src/model/storage");
-const profiles = require("./src/model/profiles");
+const conf = require("./src/model/config");
 const { Store, emptyState } = require("./src/model/store");
 const { ToriiClient } = require("./src/torii/client");
 const { FireflyClient } = require("./src/firefly");
@@ -35,8 +35,7 @@ const App = {
   hasKey: false, currentTab: "items", view: "list",
 
   async init() {
-    this.settings = deepMerge(profiles.defaultSettings(), await storage.readJson("settings.json", {}));
-    if (!this.settings.profiles.length) this.settings.profiles.push(profiles.defaultProfile());
+    this.settings = deepMerge(conf.defaultSettings(), await storage.readJson("settings.json", {}));
     this.migrate();
     this.store = new Store();
     this.store.settings = this.settings;
@@ -84,20 +83,21 @@ const App = {
     try { require("./src/dev/showpanel")(); } catch (e) { /* paketlenmiş sürümde src/dev yok */ }
   },
 
-  /** Eski ayar dosyalarını yeni yapıya taşır (tek seferlik, sessiz). */
+  /** Eski ayar dosyalarını yeni yapıya taşır (tek seferlik, sessiz). Eski dosyada seri profilleri varsa önce onlarda düzeltilir, sonra tek yapılandırmaya taşınır. */
   migrate() {
     const S = this.settings;
     const M = S.migrations = S.migrations || {};
-    if (!M.typeFonts) { for (const p of S.profiles) if (p.base && p.base.font === "ArialMT") delete p.base.font; M.typeFonts = true; }
+    const cfgs = () => (Array.isArray(S.profiles) ? S.profiles : [S.config]);
+    if (!M.typeFonts) { for (const p of cfgs()) if (p.base && p.base.font === "ArialMT") delete p.base.font; M.typeFonts = true; }
     if (!M.sfxLook) {
       const { DEFAULT_STYLE } = require("./src/model/rules");
-      const gb = S.global.base || {};
-      if (Object.keys(DEFAULT_STYLE).every((k) => gb[k] === undefined || gb[k] === DEFAULT_STYLE[k])) S.global.base = {};
-      for (const p of S.profiles) if (!(p.rules || []).some((r) => (r.types || []).includes("sfx"))) (p.rules = p.rules || []).push(profiles.defaultSfxRule());
+      const gb = (S.global && S.global.base) || null;
+      if (gb && Object.keys(DEFAULT_STYLE).every((k) => gb[k] === undefined || gb[k] === DEFAULT_STYLE[k])) S.global.base = {};
+      for (const p of cfgs()) if (!(p.rules || []).some((r) => (r.types || []).includes("sfx"))) (p.rules = p.rules || []).push(conf.defaultSfxRule());
       M.sfxLook = true;
     }
     if (!M.sfxSize) {
-      for (const p of S.profiles) for (const r of p.rules || []) if (r.name === "SFX (varsayılan)" && r.style && r.style.minSizePx === 18) { delete r.style.minSizePx; if (r.style.maxSizePx === 140) r.style.maxSizePx = 160; }
+      for (const p of cfgs()) for (const r of p.rules || []) if (r.name === "SFX (varsayılan)" && r.style && r.style.minSizePx === 18) { delete r.style.minSizePx; if (r.style.maxSizePx === 140) r.style.maxSizePx = 160; }
       M.sfxSize = true;
     }
     if (!M.v2) {
@@ -105,16 +105,20 @@ const App = {
       S.adobe = { prompt: (S.adobe && S.adobe.prompt) || "" };
       if (S.torii) delete S.torii.minFontPx;
       if (!S.ui.fullMode || S.ui.fullMode === "auto") S.ui.fullMode = "modular";
-      for (const p of S.profiles) if (p.cleanup && (p.cleanup.sfxMethod === "adobeRemove" || p.cleanup.sfxMethod === "adobeGenerative")) p.cleanup.sfxMethod = "auto";
-      for (const p of S.profiles) if (p.cleanup && (p.cleanup.method === "adobeRemove" || p.cleanup.method === "adobeGenerative")) p.cleanup.method = "auto";
+      for (const p of cfgs()) if (p.cleanup && (p.cleanup.sfxMethod === "adobeRemove" || p.cleanup.sfxMethod === "adobeGenerative")) p.cleanup.sfxMethod = "auto";
+      for (const p of cfgs()) if (p.cleanup && (p.cleanup.method === "adobeRemove" || p.cleanup.method === "adobeGenerative")) p.cleanup.method = "auto";
       M.v2 = true;
     }
+    // 1.2.0: seri profili sistemi kaldırıldı (profiller silinir, değerler taşınmaz)
+    if (conf.migrateProfiles(S)) log("info", "Seri profilleri kaldırıldı; ayarlar varsayılana döndü");
+    if (S.ui.tab === "profile") S.ui.tab = "settings";
     this.saveSettings();
   },
 
   saveSettings: debounce(function () {
     const s = clone(App.settings);
-    for (const p of s.profiles) for (const r of p.rules || []) delete r._open;
+    for (const r of (s.config && s.config.rules) || []) delete r._open;
+    for (const ch of s.chapters || []) for (const r of ch.rules || []) delete r._open;
     storage.writeJson("settings.json", s).catch((e) => log("warn", "Ayarlar kaydedilemedi", e.message));
   }, 500),
 
@@ -237,7 +241,6 @@ const App = {
       this.notify(S.ui.bubblesOnly ? "Sadece Balonlar: yalnızca ONAYLANAN diyalog balonları çevrilir, temizlenir ve dizilir. Diğer pikseller değişmez." : "Sadece Balonlar kapalı: seçili türlerin tümü işlenir.", "info");
       this.saveSettings(); this.list.render(); this.renderFilters(); this.editor.render();
     });
-    $("profileSel").addEventListener("change", () => this.setProfile($("profileSel").value));
     activate($("creditPill"), () => { if (!this.hasKey) return this.showTab("settings"); this.client.credits().then(() => this.notify("Kredi güncellendi.", "ok"), (e) => this.notify(e.message, "error")); });
     activate($("btnDetect"), () => this.pipeline.detect(this.scope()));
     activate($("btnClean"), () => this.pipeline.clean(this.scope()));
@@ -401,8 +404,7 @@ const App = {
     for (const b of $$(".tab")) { const on = b.getAttribute("data-tab") === name; b.classList.toggle("active", on); b.setAttribute("aria-selected", on ? "true" : "false"); }
     for (const p of $$(".pane")) p.classList.toggle("active", p.getAttribute("data-pane") === name);
     const pane = document.querySelector(`.pane[data-pane="${name}"]`);
-    if (name === "profile") tabs.renderProfile(pane, this);
-    else if (name === "chapter") tabs.renderChapter(pane, this);
+    if (name === "chapter") tabs.renderChapter(pane, this);
     else if (name === "clean") tabs.renderClean(pane, this);
     else if (name === "settings") tabs.renderSettings(pane, this);
   },
@@ -436,26 +438,8 @@ const App = {
         : "Henüz öğe yok — ▶ Tam İşlem ile başlayın";
     } else $("docMeta").textContent = "Photoshop'ta bir sayfa açın";
     $("listTitle").textContent = s ? `ÖĞELER · ${s.state.items.length}` : "ÖĞELER";
-    const sel = $("profileSel");
-    const cur = this.pipeline.profile(s && s.state);
-    const key = this.settings.profiles.map((p) => p.id + ":" + p.name).join("|") + "#" + cur.id;
-    if (this._profKey !== key) { // seçenekler yalnızca değişince yeniden kurulur
-      this._profKey = key;
-      clear(sel);
-      for (const p of this.settings.profiles) { const o = h("option", { value: p.id }, p.name); if (p.id === cur.id) o.setAttribute("selected", ""); sel.appendChild(o); }
-      sel.value = cur.id;
-    }
   },
 
-  setProfile(id) {
-    const s = this.store.active;
-    if (s) { s.state.profileId = id; this.store.touch(s.docId); }
-    this.settings.activeProfileId = id;
-    this.saveSettings();
-    this.renderHeader();
-    if (this.currentTab !== "items") this.showTab(this.currentTab);
-    this.editor.render();
-  },
 
   // ------------------------------------------------------------------ Photoshop olayları
   listenPhotoshop() {

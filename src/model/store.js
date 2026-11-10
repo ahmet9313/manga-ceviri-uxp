@@ -7,7 +7,7 @@ const storage = require("./storage");
 const STATE_VERSION = 1;
 
 function emptyState() {
-  return { version: STATE_VERSION, docUid: uid("d_"), items: [], groups: {}, chainContext: "", chapterId: null, pageIndex: null, profileId: null, history: [], updatedAt: Date.now() };
+  return { version: STATE_VERSION, docUid: uid("d_"), items: [], groups: {}, chainContext: "", chapterId: null, pageIndex: null, history: [], updatedAt: Date.now() };
 }
 
 class Store extends Emitter {

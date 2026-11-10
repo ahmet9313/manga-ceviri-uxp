@@ -4,7 +4,7 @@
 const { h, clear, select, numberInput, textInput, checkbox, colorInput, esc, card, emptyState } = require("./dom");
 const { fontPicker } = require("./fontpicker");
 const { ITEM_TYPES, TONES, STYLE_FIELDS, CONDITION_FIELDS, OPERATORS } = require("../model/rules");
-const profiles = require("../model/profiles");
+const conf = require("../model/config");
 const storage = require("../model/storage");
 const { METHODS } = require("../model/cleanup");
 const { TRANSLATORS, BYOK_PROVIDERS } = require("../torii/client");
@@ -79,22 +79,6 @@ function ruleEditor(rules, onChange, checks) {
   return wrap;
 }
 
-function baseStyleEditor(base, onChange, checks) {
-  const sec = h("div", { class: "stack" });
-  for (const f of STYLE_FIELDS) {
-    const v = base[f.key];
-    const set = (val) => { if (val === null || val === "") delete base[f.key]; else base[f.key] = val; onChange(); };
-    let ctl;
-    if (f.type === "font") ctl = fontPicker(v, set, checks, { allowEmpty: true, noPreview: f.key !== "font" });
-    else if (f.type === "number") ctl = numberInput(v, set, { min: f.min, max: f.max });
-    else if (f.type === "bool") ctl = select([["", "—"], ["true", "Evet"], ["false", "Hayır"]], v == null ? "" : String(v), (x) => set(x === "" ? null : x === "true"));
-    else if (f.type === "color") ctl = colorInput(v, set);
-    else if (f.type === "select") ctl = select([["", "—"]].concat(f.options), v || "", (x) => set(x || null));
-    sec.appendChild(field(f.label, ctl));
-  }
-  return sec;
-}
-
 function listEditor(rows, cols, onChange) {
   const wrap = h("div", { class: "stack" });
   const draw = () => {
@@ -108,74 +92,26 @@ function listEditor(rows, cols, onChange) {
   return wrap;
 }
 
-// ------------------------------------------------------------------ Profil sekmesi
-function renderProfile(root, app) {
-  const scroll = root.scrollTop;
-  clear(root);
-  const S = app.settings, O = openState(app);
-  const p = app.pipeline.profile(app.store.active && app.store.active.state);
-  const save = () => app.saveSettings();
-  const checks = S.fontChecks || (S.fontChecks = {});
-  const act = (fn) => async () => { try { await fn(); } catch (e) { app.notify(e.message, "error"); } };
-
-  root.appendChild(card("p-main", "Seri profili", p.name, [
-    h("div", { class: "row" },
-      h("button", { class: "mini", onclick: () => { const n = profiles.defaultProfile("Yeni seri"); S.profiles.push(n); app.setProfile(n.id); } }, "+ Yeni"),
-      h("button", { class: "mini", onclick: () => { const c = profiles.copyProfile(p); S.profiles.push(c); app.setProfile(c.id); } }, "Kopyala"),
-      h("button", { class: "mini", title: "Anahtar içermez", onclick: act(async () => { const f = await storage.pickSaveFile(p.name.replace(/[^\w\-ğüşıöçĞÜŞİÖÇ ]/g, "_") + ".mcsprofil.json", ["json"]); if (f) { await f.write(JSON.stringify(profiles.exportProfile(p), null, 1)); app.notify("Profil dışa aktarıldı (anahtar içermez).", "ok"); } }) }, "Dışa aktar"),
-      h("button", { class: "mini", onclick: act(async () => { const f = await storage.pickOpenFile(["json"]); if (!f) return; const np = profiles.importProfile(await f.read()); S.profiles.push(np); app.setProfile(np.id); app.notify("Profil içe aktarıldı: " + np.name, "ok"); }) }, "İçe aktar"),
-      h("button", { class: "mini quiet danger", onclick: act(async () => { if (S.profiles.length < 2) return app.notify("Son profil silinemez.", "warn"); const ok = await dialogs.confirm("Profili sil", `"${esc(p.name)}" silinsin mi?`, ["Sil", "Vazgeç"]); if (ok === 0) { S.profiles = S.profiles.filter((x) => x.id !== p.id); app.setProfile(S.profiles[0].id); } }) }, "Sil")),
-    field("Ad", textInput(p.name, (v) => { p.name = v; save(); app.renderHeader(); })),
-    field("Kaynak dil", select([["auto", "Otomatik algıla (tüm diller)"]].concat(profiles.LANGS.filter((l) => l[0] !== "tr")), p.sourceLang || "auto", (v) => { p.sourceLang = v; save(); })),
-    hint("Seçilirse yalnızca bu dildeki yazılar çevrilip silinir; diğer dillerdeki yazılar olduğu gibi kalır."),
-    field("Hedef dil", select(profiles.LANGS, p.targetLang || "tr", (v) => { p.targetLang = v; save(); })),
-    field("Okuma yönü", select([["ltr", "Soldan sağa (webtoon/manhwa)"], ["rtl", "Sağdan sola (manga)"]], p.readingDir, (v) => { p.readingDir = v; save(); })),
-    field("Çeviri modeli", select(TRANSLATORS.map((t) => [t.id, t.label]), p.translator, (v) => { p.translator = v; save(); })),
-    field("Düşünme", select([["none", "Yok"], ["low", "Düşük"], ["medium", "Orta"], ["high", "Yüksek"]], p.reasoning || "none", (v) => { p.reasoning = v; save(); })),
-  ], O, true));
-
-  const instr = h("textarea", { rows: 3, placeholder: "Çeviri talimatı (ton, üslup, isim kuralları)…" }); instr.value = p.instruction || "";
-  instr.addEventListener("change", () => { p.instruction = instr.value; save(); });
-  const hon = h("textarea", { rows: 2, placeholder: "Hitap biçimi (ör. -san → Bey/Hanım, senpai → abi/abla)" }); hon.value = p.honorifics || "";
-  hon.addEventListener("change", () => { p.honorifics = hon.value; save(); });
-  root.appendChild(card("p-ctx", "Çeviri bağlamı", `${(p.glossary || []).length} terim · ${(p.characters || []).length} karakter`, [
-    instr, hon,
-    h("div", { class: "group-label" }, "SERİ SÖZLÜĞÜ (kaynak → hedef)"), listEditor(p.glossary, [{ key: "src", label: "Kaynak" }, { key: "tgt", label: "Hedef" }, { key: "note", label: "Not" }], save),
-    h("div", { class: "group-label" }, "KARAKTER ADLARI"), listEditor(p.characters, [{ key: "name", label: "Ad" }, { key: "tr", label: "Türkçe yazımı" }, { key: "note", label: "Not (cinsiyet, hitap)" }], save),
-  ], O, false));
-
-  root.appendChild(card("p-base", "Taban stil", p.base.font || "türe göre font", [hint("Kural ve elle değer yoksa kullanılır. Boş font: türe göre kurulu çizgi roman fontu."), baseStyleEditor(p.base, save, checks)], O, false));
-  root.appendChild(card("p-rules", "Kurallar (koşul + stil)", `${(p.rules || []).length} kural`, [
-    hint("Öncelik: Manuel → Bölüm → Seri → Genel → Varsayılan. Aynı öğeye birden çok kural uyarsa en yüksek öncelik kazanır."),
-    h("button", { class: "mini", onclick: () => { p.rules.push(...profiles.exampleRules()); save(); renderProfile(root, app); } }, "Örnek kural seti ekle"),
-    ruleEditor(p.rules, save, checks),
-  ], O, false));
-
-  const tk = p.turkish || (p.turkish = { enabled: true });
-  let testFont = p.base.font || "ArialMT";
-  const testOut = h("div", { class: "small muted" });
-  root.appendChild(card("p-tr", "Türkçe düzeltme ve glif testi", tk.enabled ? "açık" : "kapalı", [
-    checkbox(tk.enabled, (v) => { tk.enabled = v; save(); }, "Türkçe düzeltme"),
-    checkbox(tk.circumflexToPlain, (v) => { tk.circumflexToPlain = v; save(); }, "â/Â → a/A"),
-    checkbox(tk.smartPunct, (v) => { tk.smartPunct = v; save(); }, "Akıllı noktalama (… ve boşluk)"),
-    h("div", { class: "row" }, fontPicker(testFont, (v) => { testFont = v; }, checks),
-      h("button", { class: "mini", onclick: async () => {
-        try {
-          testOut.textContent = "Test ediliyor…";
-          const r = await require("../ps/fontcheck").checkFont(testFont);
-          checks[testFont] = r; save();
-          testOut.className = r.missing.length ? "small warn" : "small ok";
-          testOut.textContent = r.missing.length ? `Eksik glif: ${r.missing.join(" ")} — dizgide yedek font uygulanır.` : `ÇĞİÖŞÜ çğıöşü tamam.${r.missingCircumflex.length ? " (â/Â eksik → â→a seçeneğini açın)" : ""}`;
-        } catch (e) { testOut.textContent = e.message; testOut.className = "small err"; }
-      } }, "Glif testi")),
-    testOut,
-  ], O, false));
-
-  root.appendChild(card("p-global", "Genel kurallar (tüm seriler)", `${(S.global.rules || []).length} kural`, [
-    ruleEditor(S.global.rules, save, checks),
-    h("div", { class: "group-label" }, "GENEL TABAN STİL"), baseStyleEditor(S.global.base, save, checks),
-  ], O, false));
-  root.scrollTop = scroll;
+/** Ayarlar › yalnızca gerçekten gereken çeviri ayarları (seri profili yok; stil/kurallar otomatik varsayılanla). */
+function translationCards(app, O, save) {
+  const c = app.pipeline.cfg();
+  const instr = h("textarea", { rows: 3, placeholder: "İsteğe bağlı: ton, üslup, isim kuralları (ör. \"Resmî hitap kullanma\")" }); instr.value = c.instruction || "";
+  instr.addEventListener("change", () => { c.instruction = instr.value; save(); });
+  c.glossary = c.glossary || []; c.characters = c.characters || [];
+  return [
+    card("s-tr", "Çeviri", `${(conf.LANGS.find((l) => l[0] === c.targetLang) || ["", c.targetLang])[1]} · ${(TRANSLATORS.find((t) => t.id === c.translator) || { label: c.translator }).label}`, [
+      field("Kaynak dil", select([["auto", "Otomatik algıla"]].concat(conf.LANGS.filter((l) => l[0] !== "tr")), c.sourceLang || "auto", (v) => { c.sourceLang = v; save(); })),
+      hint("Bir dil seçilirse yalnızca o dildeki yazılar çevrilip silinir; diğer dillerdeki yazılar olduğu gibi kalır."),
+      field("Hedef dil", select(conf.LANGS, c.targetLang || "tr", (v) => { c.targetLang = v; save(); })),
+      field("Okuma yönü", select([["ltr", "Soldan sağa (webtoon/manhwa)"], ["rtl", "Sağdan sola (manga)"]], c.readingDir || "ltr", (v) => { c.readingDir = v; save(); })),
+      field("Çeviri modeli", select(TRANSLATORS.map((t) => [t.id, t.label]), c.translator, (v) => { c.translator = v; save(); })),
+    ], O, true),
+    card("s-ctx", "Talimat ve sözlük", `${c.glossary.length} terim · ${c.characters.length} karakter`, [
+      instr,
+      h("div", { class: "group-label" }, "SÖZLÜK (kaynak → hedef)"), listEditor(c.glossary, [{ key: "src", label: "Kaynak" }, { key: "tgt", label: "Hedef" }], save),
+      h("div", { class: "group-label" }, "KARAKTER ADLARI"), listEditor(c.characters, [{ key: "name", label: "Ad" }, { key: "tr", label: "Türkçe yazımı" }], save),
+    ], O, false),
+  ];
 }
 
 // ------------------------------------------------------------------ Bölüm sekmesi
@@ -231,7 +167,7 @@ function renderChapter(root, app) {
 function renderClean(root, app) {
   clear(root);
   const S = app.settings, O = openState(app);
-  const p = app.pipeline.profile(app.store.active && app.store.active.state);
+  const p = app.pipeline.cfg();
   const save = () => app.saveSettings();
   const A = S.adobe || (S.adobe = { prompt: "" });
   const ffOk = !!(S.firefly.proxyUrl && S.cleanup.verified && S.cleanup.verified.firefly);
@@ -290,18 +226,18 @@ function renderSettings(root, app) {
     field("API anahtarı", key),
     hint("Anahtar UXP Secure Storage'da şifreli saklanır; profillere, dışa aktarımlara ve loglara yazılmaz."),
     h("div", { class: "row" },
-      h("button", { class: "btn cta", onclick: act(async () => { const v = key.value.trim(); if (!v) throw new Error("Anahtarı yapıştırın."); if (/…|.../.test(v)) throw new Error("Bu anahtar kısaltılmış (…) görünüyor. Torii panelinden TAM anahtarı kopyalayın."); await storage.setSecret("torii_api_key", v); key.value = ""; app.hasKey = true; key.placeholder = "•••••••• (kayıtlı)"; const c = await app.client.credits(); out.textContent = `Kaydedildi ve doğrulandı. Kalan kredi: ${c}`; out.className = "small ok"; }) }, "Kaydet"),
+      h("button", { class: "btn cta", onclick: act(async () => { const v = key.value.trim(); if (!v) throw new Error("Anahtarı yapıştırın."); if (/…|\.\.\./.test(v)) throw new Error("Bu anahtar kısaltılmış (…) görünüyor. Torii panelinden TAM anahtarı kopyalayın."); await storage.setSecret("torii_api_key", v); key.value = ""; app.hasKey = true; key.placeholder = "•••••••• (kayıtlı)"; const c = await app.client.credits(); out.textContent = `Kaydedildi ve doğrulandı. Kalan kredi: ${c}`; out.className = "small ok"; }) }, "Kaydet"),
       h("button", { class: "btn", onclick: act(async () => { out.textContent = "Test ediliyor…"; out.className = "small muted"; const c = await app.client.credits(); const k = await app.client.keys().catch(() => null); const cur = k && k.keys ? k.keys.find((x) => x.current) : null; out.textContent = `Bağlantı tamam. Kalan kredi: ${c}${cur ? " · anahtar: " + (cur.name || cur.display_key) : ""}`; out.className = "small ok"; }) }, "Bağlantıyı test et"),
       app.hasKey ? h("button", { class: "btn quiet danger", onclick: act(async () => { const ok = await dialogs.confirm("Anahtarı sil", "Torii API anahtarı bu bilgisayardan silinsin mi?", ["Sil", "Vazgeç"]); if (ok !== 0) return; await storage.setSecret("torii_api_key", ""); app.hasKey = false; app.client.lastCredits = null; app.renderCredits(); renderSettings(root, app); app.notify("Anahtar silindi.", "ok"); }) }, "Anahtarı sil") : null),
     out,
   ], O, true));
 
+  for (const c of translationCards(app, O, save)) root.appendChild(c);
   root.appendChild(card("s-run", "Tam İşlem", S.ui.fullMode === "single" ? "tek istek" : "modüler (ucuz)", [
     field("Mod", select([["modular", "Modüler: OCR → çeviri → temizlik (önerilen)"], ["single", "Tek istek: Torii görsel çeviri"]], S.ui.fullMode === "single" ? "single" : "modular", (v) => { S.ui.fullMode = v; save(); app.renderModeLine(); renderSettings(root, app); })),
     hint(S.ui.fullMode === "single"
       ? "Tek istek: Torii sayfayı kendisi temizler ve çevirir. Ölçülen maliyet 800×10000 sayfada 6–8,4 kredi."
       : "Modüler: OCR 1 + çeviri ≥1 + çizim üstü inpaint 0,02 kredi. Balonlar kredisiz yerel dolguyla temizlenir. Çalıştırma sonunda harcanan kredi gösterilir."),
-    hint("Çeviri modeli seri profilinde seçilir (Profil sekmesi)."),
   ], O, true));
 
   // ---- Gelişmiş ----
@@ -358,4 +294,4 @@ function renderSettings(root, app) {
   root.scrollTop = scroll;
 }
 
-module.exports = { renderProfile, renderChapter, renderClean, renderSettings };
+module.exports = { renderChapter, renderClean, renderSettings };
