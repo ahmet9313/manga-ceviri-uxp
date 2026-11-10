@@ -122,6 +122,13 @@ R("../src/ps/api").modal("Birim testleri", async () => {
     return s;
   });
 
+  await test("Türkçe büyük harf: çevrilmemiş isim (Xiao) İ almaz, Türkçe kelime alır", async () => {
+    const { trUpper } = R("../src/ps/text");
+    const s = trUpper("Xiao Zheng? İyi misin, şimdi!", "XIAO ZHENG?");
+    assert(s === "XIAO ZHENG? İYİ MİSİN, ŞİMDİ!", s);
+    return s;
+  });
+
   await test("Ekran→belge dönüşümü (zoom, DPI)", async () => {
     const a = geom.screenDeltaToDoc(10, 20, { zoom: 0.5, devicePixelRatio: 1.25 });
     assert(Math.abs(a[0] - 25) < 1e-9 && Math.abs(a[1] - 50) < 1e-9, String(a));

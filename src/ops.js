@@ -108,8 +108,8 @@ class Ops {
     if (it.layerId != null && findLayer(getDoc(docId), it.layerId)) {
       const st = this.pipeline.resolveFor(this.store.session(docId).state, it).style;
       await modal("Metni güncelle", async () => {
-        await text.setContents(docId, it.layerId, value, st.uppercase);
-        it.lastApplied = Object.assign({}, it.lastApplied, { contents: st.uppercase ? text.trUpper(value) : value });
+        await text.setContents(docId, it.layerId, value, st.uppercase, it.source);
+        it.lastApplied = Object.assign({}, it.lastApplied, { contents: st.uppercase ? text.trUpper(value, it.source) : value });
       }, { documentID: docId, historyName: `#${it.order} metin` });
     }
     this.store.touch(docId);
@@ -146,7 +146,7 @@ class Ops {
         if (["font", "color", "tracking", "align", "fauxBold", "fauxItalic", "sizePx", "leadingPct"].includes(field)) await text.applyStyle(docId, it.layerId, one);
         else if (field.startsWith("stroke") || field.startsWith("shadow")) await text.setStrokeShadow(docId, it.layerId, { strokeEnabled: !!st.strokeEnabled, strokeSize: st.strokeSize, strokeColor: st.strokeColor, shadowEnabled: !!st.shadowEnabled, shadowColor: st.shadowColor, shadowDistance: st.shadowDistance, shadowSize: st.shadowSize });
         else if (field === "warpStyle" || field === "warpBend") await text.setWarp(docId, it.layerId, st.warpStyle, st.warpBend);
-        else if (field === "uppercase") await text.setContents(docId, it.layerId, it.translation, st.uppercase);
+        else if (field === "uppercase") await text.setContents(docId, it.layerId, it.translation, st.uppercase, it.source);
         it.lastApplied = await this.pipeline.snapshotLayer({ docId }, it.layerId);
       }, { documentID: docId, historyName: `#${it.order} ${field}` });
     }

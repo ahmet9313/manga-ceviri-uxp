@@ -6,7 +6,7 @@ const { DEFAULT_STYLE } = require("./rules");
 /** Her yeni seride hazır gelen, düzenlenebilir SFX kuralı. Font/renk/kontur belirtilmez → orijinal görünüm + türe göre font. */
 function defaultSfxRule() {
   return { id: uid("r_"), name: "SFX (varsayılan)", enabled: true, priority: 5, types: ["sfx"], tones: [], match: "all", conditions: [],
-    style: { fauxBold: true, uppercase: true, minSizePx: 18, maxSizePx: 140, paddingPct: 2, fit: true } };
+    style: { fauxBold: true, uppercase: true, maxSizePx: 160, paddingPct: 2, fit: true } }; // min. punto: orijinal yazı boyundan (applyOriginalLook)
 }
 
 function defaultProfile(name) {

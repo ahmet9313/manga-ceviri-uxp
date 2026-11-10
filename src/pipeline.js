@@ -236,6 +236,11 @@ class Pipeline {
     const medianFont = classify.median(fsList) || 24;
     const W = img.width, H = img.height, ox = img.bounds.left, oy = img.bounds.top;
     let changed = 0;
+    // Önce balonu ara: kapalı bir balonun içindeki yazı SFX değildir (ör. siyah dikenli balon)
+    for (const it of items) {
+      if (it.typeConfirmed && (it.type === "sfx" || it.type === "offbubble")) { it.bubble = null; continue; }
+      try { it.bubble = classify.detectBubble(img, it); } catch (e) { it.bubble = null; }
+    }
     for (const it of items) {
       if (it.typeConfirmed) continue;
       const fs = (it.ocr && it.ocr.fontsize) || medianFont;
@@ -254,6 +259,8 @@ class Pipeline {
       if (r.type !== it.type) changed++;
       it.type = r.type; it.typeSuggested = r.type; it.typeReasons = r.reasons; it.bgStats = st;
     }
+    // SFX / balon dışı kalanlarda balon bilgisi kullanılmaz
+    for (const it of items) if (it.type === "sfx" || it.type === "offbubble") it.bubble = null;
     return changed;
   }
 
@@ -723,6 +730,7 @@ class Pipeline {
   resolveFor(state, item) {
     const r = resolveStyle(item, this.styleLevels(state), this.pageStats(state));
     this.applyOriginalLook(item, r);
+    r.style.uppercaseSource = item.source; // büyük harfte çevrilmemiş isimler Türkçe i→İ kuralına girmesin
     // Eksik font / glif → yedek font
     const fc = this.settings.fontChecks || {};
     const installed = this.fontSet();
@@ -753,10 +761,16 @@ class Pipeline {
       if (isDef("strokeColor")) { st.strokeColor = o.strokeColor; src.strokeColor = orig; }
       if (isDef("strokeSize")) { st.strokeSize = Math.max(2, Math.round((o.strokeWidth || 6) / 2)); src.strokeSize = orig; }
     }
+    // SFX / balon dışı: çeviri orijinal yazının boyunun %60'ından küçük dizilmez (elle değer hariç) — "Ah!" minicik kalmasın
+    if (art && o.fontsize && !(src.minSizePx && src.minSizePx.level === "manual")) {
+      const floor = Math.round(o.fontsize * 0.6);
+      if (!st.minSizePx || st.minSizePx < floor) { st.minSizePx = floor; src.minSizePx = orig; }
+      if (st.maxSizePx && st.maxSizePx < st.minSizePx) st.maxSizePx = Math.round(st.minSizePx * 1.6);
+    }
     if (item.type === "sfx") {
       const boxH = (item.box && Math.min(item.box.w, item.box.h)) || 60;
       if (isDef("maxSizePx")) { st.maxSizePx = Math.max(64, Math.round(boxH * 0.9)); src.maxSizePx = orig; }
-      if (isDef("minSizePx")) { st.minSizePx = 18; src.minSizePx = orig; }
+      if (isDef("minSizePx")) { st.minSizePx = Math.max(18, Math.round(((o.fontsize) || 30) * 0.7)); src.minSizePx = orig; } // orijinal SFX boyunun %70'i altına inmez
       if (isDef("fauxBold")) { st.fauxBold = true; src.fauxBold = orig; }
       if (isDef("uppercase")) { st.uppercase = true; src.uppercase = orig; }
       if (isDef("paddingPct")) { st.paddingPct = 2; src.paddingPct = orig; }
@@ -782,6 +796,15 @@ class Pipeline {
     const b = item.box || geom.polygonToBox(item.polygon);
     const box = { cx: b.cx, cy: b.cy, w: b.w, h: b.h, angle: item.type === "sfx" ? b.angle || 0 : 0 };
     if (item.direction === "top_to_bottom") { box.w = Math.max(b.w, b.h * 0.6); box.h = Math.max(b.h, box.w * 0.6); box.angle = 0; }
+    // Balon bulunduysa: yazı balonun ORTASINA, balonun içine sığan (elips için ~%70) kutuya yerleşir
+    const bub = item.bubble;
+    if (bub && (item.type === "dialog" || item.type === "narration")) {
+      box.cx = bub.cx; box.cy = bub.cy;
+      box.w = Math.max(b.w * 0.9, bub.w * 0.70);
+      box.h = Math.max(b.h * 0.9, bub.h * 0.70);
+      box.w = Math.min(box.w, bub.w * 0.86); box.h = Math.min(box.h, bub.h * 0.86);
+      box.angle = 0;
+    }
     if (item.manualBox) Object.assign(box, item.manualBox);
     box.w = Math.max(box.w, 24); box.h = Math.max(box.h, 16);
     return box;
@@ -833,8 +856,8 @@ class Pipeline {
       if (st.fit) await this.fitItem(t, it, st, box);
     } else {
       const cur = curBefore || (await text.readTextLayer(t.docId, it.layerId));
-      const desired = st.uppercase ? text.trUpper(it.translation) : it.translation;
-      if (!it.locks.text && cur.contents !== desired) await text.setContents(t.docId, it.layerId, it.translation, st.uppercase);
+      const desired = st.uppercase ? text.trUpper(it.translation, it.source) : it.translation;
+      if (!it.locks.text && cur.contents !== desired) await text.setContents(t.docId, it.layerId, it.translation, st.uppercase, it.source);
       if (!it.locks.style) {
         const diff = {};
         for (const f of ["font", "color", "tracking", "align", "fauxBold", "fauxItalic"]) if (st[f] != null && cur[f] !== st[f]) diff[f] = st[f];
@@ -1022,16 +1045,19 @@ class Pipeline {
       const g = await this.ensureStructure(t);
       for (const it of eligible) {
         const fs = (it.ocr && it.ocr.fontsize) || 20;
-        const core = geom.rectRound(geom.rectInflate(it.textBounds || it.bounds, Math.max(3, fs * 0.25), docRect));
+        // Çekirdek: yazı kutusu (kopuk nokta/ünlem için fs*0.8 genişletilmiş) + varsa balonun iç alanı (balon içindeki HER yazı parçası temizlenir)
+        let core = geom.rectRound(geom.rectInflate(it.textBounds || it.bounds, Math.max(4, fs * 0.8), docRect));
+        const bub = it.bubble && it.bubble.rect ? geom.rectRound(geom.rectInflate(it.bubble.rect, -Math.max(3, Math.min(it.bubble.w, it.bubble.h) * 0.04), docRect)) : null;
+        if (bub && bub.right > bub.left && bub.bottom > bub.top) core = geom.rectUnion(core, bub);
         const reach = Math.max(fs * 2.2, Math.max(it.box.w, it.box.h) * 0.45);
-        const a = geom.rectRound(geom.rectInflate(it.textBounds || it.bounds, reach, docRect));
+        const a = geom.rectRound(geom.rectUnion(geom.rectInflate(it.textBounds || it.bounds, reach, docRect), bub ? geom.rectInflate(bub, 6, docRect) : null));
         const w = a.right - a.left, h = a.bottom - a.top;
         const o = new Uint8Array(w * h * 3), r = new Uint8Array(w * h * 3), d = new Uint8Array(w * h);
         for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
           const si = (a.top + y) * t.w + a.left + x, di = (y * w + x) * 3;
           o[di] = img.data[si * 3]; o[di + 1] = img.data[si * 3 + 1]; o[di + 2] = img.data[si * 3 + 2];
           r[di] = inp.data[si * inp.channels]; r[di + 1] = inp.data[si * inp.channels + 1]; r[di + 2] = inp.data[si * inp.channels + 2];
-          if (Math.abs(o[di] - r[di]) + Math.abs(o[di + 1] - r[di + 1]) + Math.abs(o[di + 2] - r[di + 2]) > 30) d[y * w + x] = 255;
+          if (Math.abs(o[di] - r[di]) + Math.abs(o[di + 1] - r[di + 1]) + Math.abs(o[di + 2] - r[di + 2]) > 20) d[y * w + x] = 255; // 20: siyah zeminde koyu yazı da yakalanır
         }
         for (const b of blocked) { const k = geom.rectIntersect(b, a); if (!k) continue; for (let y = k.top; y < k.bottom; y++) for (let x = k.left; x < k.right; x++) d[(y - a.top) * w + (x - a.left)] = 0; }
         // Harfleri kelime/satır halinde birleştir; büyük SFX'te harf aralığı geniş olduğundan kutu boyutu da hesaba katılır
@@ -1072,6 +1098,7 @@ class Pipeline {
           }
           continue;
         }
+        this._lastMasks = this._lastMasks || {}; this._lastMasks[it.id] = { area: a, mask: m, width: w, height: h }; // teşhis/test için
         if (sfxOnArt(it)) { this._maskOverrides[it.id] = { area: a, mask: m, width: w, height: h }; deferred.push(it.id); continue; }
         const p = { item: it, area: a, mask: { mask: m, width: w, height: h }, patch: cleanup.patchFromResult(r, 3, w, h, m), decision: { method: "torii", reason: "Torii görsel çeviri temizliği; orijinal yazının tamamı (çeviri kutusu dışına taşan kısımlar dahil) maskelendi." } };
         await this.writeCleanPatch(sess, t, g, p);
@@ -1181,8 +1208,8 @@ class Pipeline {
             it.translation = m.after; it.translationEdited = true;
             if (it.layerId != null && findLayer(getDoc(docId), it.layerId)) {
               const st = this.resolveFor(sess.state, it).style;
-              await text.setContents(docId, it.layerId, it.translation, st.uppercase);
-              it.lastApplied = Object.assign({}, it.lastApplied, { contents: st.uppercase ? text.trUpper(it.translation) : it.translation });
+              await text.setContents(docId, it.layerId, it.translation, st.uppercase, it.source);
+              it.lastApplied = Object.assign({}, it.lastApplied, { contents: st.uppercase ? text.trUpper(it.translation, it.source) : it.translation });
             }
           }
           n++;

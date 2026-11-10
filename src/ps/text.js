@@ -10,7 +10,14 @@ const { app, bp, constants, getDoc, findLayer, selectLayer, rgbDesc, descToHex, 
 const pxToPt = (px, res) => (px * 72) / res;
 const ptToPx = (pt, res) => (pt * res) / 72;
 
-function trUpper(s) { return String(s).replace(/i/g, "İ").replace(/ı/g, "I").toUpperCase(); }
+/**
+ * Türkçe büyük harf (i→İ, ı→I). source verilirse: kaynak metinde aynen geçen kelimeler (çevrilmemiş isimler,
+ * ör. "Xiao") Türkçe kurala girmez → "XIAO" ("XİAO" değil).
+ */
+function trUpper(s, source) {
+  const keep = new Set(String(source || "").toLowerCase().match(/[a-z]+/g) || []);
+  return String(s).replace(/[A-Za-zÀ-ÿĞğİıŞşÇçÖöÜü]+/g, (w) => keep.has(w.toLowerCase()) ? w.toUpperCase() : w.replace(/i/g, "İ").replace(/ı/g, "I").toUpperCase());
+}
 function toPsText(s) { return String(s == null ? "" : s).replace(/\r\n|\n/g, "\r"); }
 function fromPsText(s) { return String(s == null ? "" : s).replace(/\r/g, "\n"); }
 
@@ -29,7 +36,7 @@ async function getTextKey(docId, layerId) {
 async function createTextLayer(docId, groupId, text, box, style, name) {
   const { doc, W, H, res } = docInfo(docId);
   if (groupId != null) await bp({ _obj: "select", _target: [{ _ref: "layer", _id: groupId }], makeVisible: false });
-  const content = toPsText(style.uppercase ? trUpper(text) : text);
+  const content = toPsText(style.uppercase ? trUpper(text, style.uppercaseSource) : text);
   const len = Math.max(1, content.length);
   const left = box.cx - box.w / 2, top = box.cy - box.h / 2;
   const sizePt = pxToPt(style.sizePx || 24, res);
@@ -109,9 +116,9 @@ async function readTextLayer(docId, layerId) {
   };
 }
 
-async function setContents(docId, layerId, text, uppercase) {
+async function setContents(docId, layerId, text, uppercase, source) {
   const layer = findLayer(getDoc(docId), layerId);
-  layer.textItem.contents = toPsText(uppercase ? trUpper(text) : text);
+  layer.textItem.contents = toPsText(uppercase ? trUpper(text, source) : text);
 }
 
 /** Yalnızca verilen alanları uygular; diğer karakter biçimleri korunur. */
@@ -223,6 +230,27 @@ async function fitToBox(docId, layerId, box, opts) {
     return { h: b.bottom - b.top, w: b.right - b.left };
   };
   let lo = Math.max(4, opts.minPx || 10), hi = Math.max(lo, opts.maxPx || 60), best = lo;
+  // Kelime bölünmesin: en uzun kelimelerin genişliğini ölç, punto o kelime kutuya TEK satırda sığacak değeri aşmasın
+  // (yalnızca tek biçimli katmanlarda; elle verilmiş karakter biçimleri bozulmasın diye)
+  let wordLimited = false;
+  if (cur.rangeCount <= 1 && cur.contents && /\S\s+\S|\S{2,}/.test(cur.contents)) {
+    const words = cur.contents.split(/\s+/).filter(Boolean).sort((a, b) => b.length - a.length).slice(0, 2);
+    const PROBE = 100;
+    let perPx = 0;
+    await resizeBox(docId, layerId, Math.max(innerW * 30, 4000), Math.max(innerH * 6, 400));
+    for (const wd of words) {
+      layer.textItem.contents = wd;
+      await applyStyle(docId, layerId, { sizePx: PROBE });
+      const b = findLayer(doc, layerId).boundsNoEffects;
+      perPx = Math.max(perPx, (b.right - b.left) / PROBE);
+    }
+    layer.textItem.contents = toPsText(cur.contents);
+    await resizeBox(docId, layerId, innerW, Math.max(innerH * 6, 400));
+    if (perPx > 0) {
+      const wordMax = Math.floor((innerW * 0.97) / perPx);
+      if (wordMax < hi) { hi = Math.max(lo, wordMax); wordLimited = true; }
+    }
+  }
   let m = await measure(hi);
   if (m.h <= innerH) best = hi;
   else {

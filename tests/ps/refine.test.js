@@ -24,7 +24,7 @@ const TEXTS = [
 // KREDİ HARCAMAMAK İÇİN: Adobe Üretken Dolgu çağrısı sahte (her zaman hata → otomatik İçerik Duyarlı yedeği)
 R("../src/ps/adobe").replay = async () => { throw new Error("test: Üretken Dolgu kullanılamıyor"); };
 api.modal("Tür ve temizlik testi", async () => {
-  for (const d of app.documents.slice()) if (String(d.title).indexOf("turning-into-a-tentacle-monster-p1") === 0 || String(d.title).indexOf("MCS_") === 0) await d.closeWithoutSaving();
+  for (const d of app.documents.slice()) if (String(d.title).indexOf("MCS_") === 0) await d.closeWithoutSaving();
   await app.open(await lfs.getEntryWithUrl("file:" + ASSET_PATH));
   const doc = app.activeDocument, W = doc.width, H = doc.height;
   const orig = await pixels.readComposite(doc.id, { left: 0, top: 0, right: W, bottom: H });
@@ -45,6 +45,13 @@ api.modal("Tür ve temizlik testi", async () => {
     }
     inkMasks.push(ink);
   }
+  // Kopuk nokta (üç noktanın biri gibi): XIAOFEI balonunun içinde, yazıdan ~40 px uzakta; Torii silmiş gibi (inp beyaz)
+  const DOT = { x: 540, y: 1062, r: 4 }; // balon elipsi içinde, yazı çekirdeğinin (fs*0.8) dışında
+  for (let y = DOT.y - DOT.r; y <= DOT.y + DOT.r; y++) for (let x = DOT.x - DOT.r; x <= DOT.x + DOT.r; x++) {
+    if ((x - DOT.x) ** 2 + (y - DOT.y) ** 2 > DOT.r * DOT.r) continue;
+    const i = y * W + x; orig.data[i * 3] = orig.data[i * 3 + 1] = orig.data[i * 3 + 2] = 20;
+    inp.data[i * 3] = inp.data[i * 3 + 1] = inp.data[i * 3 + 2] = 255;
+  }
   // Oturum + Torii benzeri öğeler: çeviri kutusu = orijinal yazının %65'i (üst kısma kaymış)
   const store = new Store(); store.settings = profiles.defaultSettings(); store.settings.fontChecks = {};
   const P = new Pipeline(store, null, { confirm: async () => 0, notify: () => {}, progress: () => {}, preview: async () => true });
@@ -60,6 +67,14 @@ api.modal("Tür ve temizlik testi", async () => {
   // 1) Tür ayrımı
   P.refineTypes(s.state.items, { data: inp.data, width: W, height: H, bounds: { left: 0, top: 0 } }, true);
   s.state.items.forEach((it, k) => out.results.push({ name: `Tür: ${TEXTS[k].src.slice(0, 24)}`, status: it.type === TEXTS[k].expect ? "PASS" : "FAIL", got: it.type, expect: TEXTS[k].expect, why: it.typeReasons, stats: it.bgStats }));
+  // Balon tespiti + dizgi kutusunun balon ortasına yerleşmesi (XIAOFEI balonu ~ x 415-760, y 800-1090)
+  const b0 = s.state.items[0];
+  const bb = b0.bubble;
+  out.results.push({ name: "Balon bulundu (XIAOFEI)", status: bb && bb.rect.left < 470 && bb.rect.right > 700 && bb.rect.top < 860 && bb.rect.bottom > 1040 ? "PASS" : "FAIL", bubble: bb && bb.rect });
+  const tb = P.typesetBox(b0);
+  out.results.push({ name: "Dizgi kutusu balonun ortasında", status: bb && Math.abs(tb.cx - bb.cx) < 2 && Math.abs(tb.cy - bb.cy) < 2 && tb.w <= bb.w ? "PASS" : "FAIL", box: tb });
+  const sfxIt = s.state.items.find((i) => i.type === "sfx");
+  out.results.push({ name: "SFX için balon aranmaz", status: sfxIt && !sfxIt.bubble ? "PASS" : "FAIL" });
   save();
   // 2) Temizlik: çeviri kutusu dışına taşan yazı da silinmeli
   const t = P.captureTarget();
@@ -73,13 +88,20 @@ api.modal("Tür ve temizlik testi", async () => {
     const tol = tx.expect === "sfx" ? 0.05 : 0.02;
     out.results.push({ name: `Temizlik izi: ${tx.src.slice(0, 24)}`, status: ratio < tol ? "PASS" : "FAIL", inkPixels: ink.length, leftover: left, leftoverPct: Math.round(ratio * 1000) / 10 });
   });
+  // Kopuk nokta maskede mi?
+  const lm = P._lastMasks && P._lastMasks[s.state.items[0].id];
+  const dotIn = lm && DOT.x >= lm.area.left && DOT.x < lm.area.right && DOT.y >= lm.area.top && DOT.y < lm.area.bottom && lm.mask[(DOT.y - lm.area.top) * lm.width + (DOT.x - lm.area.left)] > 0;
+  out.results.push({ name: "Balon içindeki kopuk nokta da temizlendi", status: dotIn ? "PASS" : "FAIL" });
   // 3) Maske dışı değişmedi mi (temizlik katmanı yalnız yazı farkında)
   let outside = 0; const inkSet = new Set(inkMasks.flat());
+  for (let y = DOT.y - DOT.r; y <= DOT.y + DOT.r; y++) for (let x = DOT.x - DOT.r; x <= DOT.x + DOT.r; x++) inkSet.add(y * W + x); // sentetik nokta da "yazı"
   for (let i = 0; i < W * H; i++) { if (inkSet.has(i)) continue; const d = Math.abs(after.data[i * 3] - orig.data[i * 3]) + Math.abs(after.data[i * 3 + 1] - orig.data[i * 3 + 1]) + Math.abs(after.data[i * 3 + 2] - orig.data[i * 3 + 2]); if (d > 40) outside++; }
   out.results.push({ name: "Yazı dışında belirgin değişen piksel", status: outside === 0 ? "PASS" : "FAIL", outside });
   // 4) SFX görünümü: orijinal kontur + büyük/kalın/büyük harf
   const sfx = s.state.items.find((i) => i.type === "sfx");
   if (sfx) { const r = P.resolveFor(s.state, sfx); out.results.push({ name: "SFX orijinal görünüm", status: r.style.strokeEnabled && r.style.fauxBold && r.style.uppercase && r.style.maxSizePx >= 64 ? "PASS" : "FAIL", font: r.style.font, maxSizePx: r.style.maxSizePx, stroke: r.style.strokeColor }); }
+  // Temiz bırak: testin açtığı belgeleri (yalnızca MCS_ ile başlayanlar) kaydetmeden kapat
+  for (const d of app.documents.slice()) if (String(d.title).indexOf("MCS_") === 0) await d.closeWithoutSaving();
   out.finished = true;
   out.summary = { pass: out.results.filter((r) => r.status === "PASS").length, fail: out.results.filter((r) => r.status === "FAIL").length };
   save();

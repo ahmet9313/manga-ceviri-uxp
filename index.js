@@ -54,6 +54,14 @@ const App = {
       this.settings.migrations.sfxLook = true;
       this.saveSettings();
     }
+    if (!this.settings.migrations.sfxSize) {
+      // Hazır SFX kuralındaki sabit 18 px alt sınırı kaldır (alt sınır artık orijinal yazı boyundan gelir)
+      for (const p of this.settings.profiles) for (const r of p.rules || []) {
+        if (r.name === "SFX (varsayılan)" && r.style && r.style.minSizePx === 18) { delete r.style.minSizePx; if (r.style.maxSizePx === 140) r.style.maxSizePx = 160; }
+      }
+      this.settings.migrations.sfxSize = true;
+      this.saveSettings();
+    }
     this.store = new Store();
     this.store.settings = this.settings;
     this.client = new ToriiClient(() => storage.getSecret("torii_api_key"));
