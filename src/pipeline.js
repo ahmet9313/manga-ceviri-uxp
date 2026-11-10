@@ -19,6 +19,13 @@ const { AmbiguousRequestError, estimateCredits } = require("./torii/client");
 
 class TargetChangedError extends Error { constructor(m) { super(m); this.name = "TargetChangedError"; } }
 
+/** Ücretli yanıt önbelleği anahtarı: baytların FNV-1a özeti + uzunluk (aynı görsel → aynı anahtar). */
+function bytesKey(b) {
+  let h1 = 0x811c9dc5, h2 = 0x01000193;
+  for (let i = 0; i < b.length; i++) { h1 = Math.imul(h1 ^ b[i], 16777619); h2 = Math.imul(h2 ^ b[(b.length - 1 - i)], 2246822519) ^ (h2 >>> 13); }
+  return (h1 >>> 0).toString(36) + (h2 >>> 0).toString(36) + "_" + b.length;
+}
+
 class Pipeline {
   /** hooks: { confirm(title, html, buttons) → index, notify(msg, kind), progress(label, frac), preview(data) → bool, ambiguous(info) → bool } */
   constructor(store, client, hooks) {
@@ -116,9 +123,27 @@ class Pipeline {
     this.store.mirrorPage(s);
   }
 
-  async withPaidRequest(label, fn) {
+  /**
+   * Ücretli Torii isteği. cacheKey verilirse yanıt GELİR GELMEZ önbelleğe yazılır; aynı istek (aynı görsel baytları +
+   * aynı seçenekler) tekrarlanırsa — ör. sonraki adım hata verdiyse veya sayfa yeniden işleniyorsa — kredi harcanmaz.
+   */
+  async withPaidRequest(label, fn, cacheKey) {
+    this.checkCancel(); // Durdur'a basıldıysa yeni ücretli istek başlatılmaz
+    this.paidCache = this.paidCache || new Map();
+    if (cacheKey && this.paidCache.has(cacheKey)) {
+      log("info", `${label}: önbellekteki ücretli yanıt yeniden kullanıldı (kredi harcanmadı)`);
+      this.reusedPaid = (this.reusedPaid || 0) + 1;
+      return this.paidCache.get(cacheKey);
+    }
     for (;;) {
-      try { return await fn(); }
+      try {
+        const r = await fn();
+        if (cacheKey) {
+          this.paidCache.set(cacheKey, r);
+          while (this.paidCache.size > 12) this.paidCache.delete(this.paidCache.keys().next().value); // bellek sınırı
+        }
+        return r;
+      }
       catch (e) {
         if (!(e instanceof AmbiguousRequestError)) throw e;
         let after = null;
@@ -156,22 +181,27 @@ class Pipeline {
 
   async run(name, fn) {
     if (this.busy) { this.hooks.notify(`"${this.busyName}" sürüyor — bitmesini bekleyin.`, "warn"); return null; }
-    this.busy = true; this.busyName = name; this.cancelRequested = false;
+    this.busy = true; this.busyName = name; this.cancelRequested = false; this.runMode = null; this.reusedPaid = 0;
     const t0 = Date.now();
+    const c0 = this.client && this.client.lastCredits;
     if (this.hooks.busy) this.hooks.busy(true, name);
-    let ok = false;
+    let ok = false, cancelled = false;
     try {
-      // Etkin belgenin oturumu yoksa/eskiyse önce yükle (Photoshop belge değişimi olayını göndermemiş olabilir)
+      // İşlem öncesi doğrulama: etkin belgenin oturumu yoksa/eskiyse önce yükle
       if (this.hooks.ensureDoc) await this.hooks.ensureDoc();
       const r = await fn(); ok = true; return r;
     }
     catch (e) {
+      if (e && e.cancelled) { cancelled = true; this.hooks.notify(`■ ${name} durduruldu. Tamamlanan adımlar yerinde kaldı; ${e.message}`, "warn"); return null; }
       log("error", name + " başarısız", String(e && e.message));
       this.hooks.notify("✕ " + name + ": " + (e && e.message ? e.message : e), "error");
       return null;
     } finally {
       this.busy = false; this.busyName = null;
-      if (this.hooks.busy) this.hooks.busy(false, name, { ok, ms: Date.now() - t0 });
+      // Harcanan kredi: Torii her ücretli yanıtta kalan krediyi "credits" başlığında bildirir (önce − sonra)
+      const c1 = this.client && this.client.lastCredits;
+      const credits = c0 != null && c1 != null ? Math.max(0, Math.round((c0 - c1) * 1000) / 1000) : null;
+      if (this.hooks.busy) this.hooks.busy(false, name, { ok, cancelled, ms: Date.now() - t0, credits, mode: this.runMode, reused: this.reusedPaid });
     }
   }
 
@@ -211,10 +241,13 @@ class Pipeline {
     }
     const pngBytes = png.encodePng(rgb, img.width, img.height, 3, 4);
     this.progress("Torii OCR…", 0.3);
-    const paras = await this.withPaidRequest("OCR", () => this.client.ocr({ bytes: pngBytes, mime: "image/png", width: img.width, height: img.height }));
+    const paras = await this.withPaidRequest("OCR", () => this.client.ocr({ bytes: pngBytes, mime: "image/png", width: img.width, height: img.height }), `ocr|${bytesKey(pngBytes)}`);
     const crop = { left: img.bounds.left, top: img.bounds.top, scale: 1 };
-    const incoming = classify.itemsFromOcr(paras, crop);
-    this.refineTypes(incoming, img, false); // tür önerisini zemin piksellerine göre düzelt
+    let incoming = classify.itemsFromOcr(paras, crop);
+    // Profilde kaynak dil seçiliyse başka dildeki yazılar (ör. arka plandaki Korece) öğe olmaz → çevrilmez, SİLİNMEZ
+    const wl = profiles.sourceWhitelist(this.profile(this.store.session(t.docId).state));
+    if (wl) { const before = incoming.length; incoming = incoming.filter((i) => !i.sourceLang || wl.includes(i.sourceLang.toLowerCase()) || wl.includes(i.sourceLang.toLowerCase().split("-")[0])); if (before !== incoming.length) log("info", `Kaynak dil filtresi: ${before - incoming.length} başka dildeki yazı atlandı`); }
+    this.refineTypes(incoming, img, false, { W: t.w, H: t.h }); // tür önerisini zemin piksellerine göre düzelt
     return this.applyOrDefer(t, "Tespit sonuçları", async (sess) => {
       const merged = classify.mergeDetections(sess.state.items, incoming);
       sess.state.items = merged.items;
@@ -231,7 +264,7 @@ class Pipeline {
    * img: {data(RGB), width, height, bounds} — öğeleri kapsayan görüntü.
    * textRemoved: true → görüntü temizlenmiş (inpainted); kutunun içi de zemin sayılır.
    */
-  refineTypes(items, img, textRemoved) {
+  refineTypes(items, img, textRemoved, page) {
     const fsList = items.map((i) => i.ocr && i.ocr.fontsize).filter(Boolean);
     const medianFont = classify.median(fsList) || 24;
     const W = img.width, H = img.height, ox = img.bounds.left, oy = img.bounds.top;
@@ -239,8 +272,12 @@ class Pipeline {
     // Önce balonu ara: kapalı bir balonun içindeki yazı SFX değildir (ör. siyah dikenli balon)
     for (const it of items) {
       if (it.typeConfirmed && (it.type === "sfx" || it.type === "offbubble")) { it.bubble = null; continue; }
-      try { it.bubble = classify.detectBubble(img, it); } catch (e) { it.bubble = null; }
+      try { it.bubble = classify.detectBubble(img, it, page); } catch (e) { it.bubble = null; }
     }
+    // Aynı balonu paylaşan öğeler (bir balonda iki paragraf): dizgide balon ortasına TOPLANMAZ, her biri kendi yerinde kalır
+    const byRect = new Map();
+    for (const it of items) if (it.bubble) { const k = JSON.stringify(it.bubble.rect); byRect.set(k, (byRect.get(k) || 0) + 1); }
+    for (const it of items) if (it.bubble) it.bubble.shared = byRect.get(JSON.stringify(it.bubble.rect)) > 1;
     for (const it of items) {
       if (it.typeConfirmed) continue;
       const fs = (it.ocr && it.ocr.fontsize) || medianFont;
@@ -273,7 +310,7 @@ class Pipeline {
       let u = null;
       for (const it of s.state.items) u = geom.rectUnion(u, geom.rectInflate(it.bounds, 60, { left: 0, top: 0, right: t.w, bottom: t.h }));
       const img = await this.readOriginalArea(t, geom.rectRound(u));
-      const n = this.refineTypes(s.state.items, img, false);
+      const n = this.refineTypes(s.state.items, img, false, { W: t.w, H: t.h });
       this.store.touch(t.docId, { reason: "reclassify" });
       this.hooks.notify(`Türler piksellere göre yeniden önerildi: ${n} öğe değişti (onaylı türlere dokunulmadı).`, "ok");
       return n;
@@ -322,7 +359,8 @@ class Pipeline {
       byok: await this.byok(),
     };
     this.progress(`Çeviri (${todo.length} metin)…`, 0.4);
-    const j = await this.withPaidRequest("Çeviri", () => this.client.translateTexts(todo.map((i) => i.source), req));
+    const j = await this.withPaidRequest("Çeviri", () => this.client.translateTexts(todo.map((i) => i.source), req),
+      "tr|" + JSON.stringify([todo.map((i) => i.source), Object.assign({}, req, { byok: req.byok ? req.byok.provider : null })]));
     return this.applyOrDefer(t, "Çeviri sonuçları", async (sess) => {
       // Sabit kimliklerle eşle: gönderim sırası = yanıt sırası
       todo.forEach((it, k) => {
@@ -376,7 +414,9 @@ class Pipeline {
     this._maskOverrides = this._maskOverrides || {};
     const prepared = items.map((it) => {
       const ov = this._maskOverrides[it.id];
-      const area = ov ? ov.area : cleanup.itemArea(it, docRect, 24);
+      let area = ov ? ov.area : cleanup.itemArea(it, docRect, 24);
+      // Balonlu öğe: alan balonun tamamını kapsar (balon içindeki tüm yazı parçaları temizlensin)
+      if (!ov && it.bubble && it.bubble.rect && (it.type === "dialog" || it.type === "narration")) area = geom.rectRound(geom.rectUnion(area, geom.rectInflate(it.bubble.rect, 4, docRect)));
       union = geom.rectUnion(union, area); return { it, area, ov };
     });
     if (manualSel) union = geom.rectUnion(union, manualSel.bounds);
@@ -397,6 +437,13 @@ class Pipeline {
       // SFX'te harflerin etrafındaki kontur da silinsin: kontur kalınlığı kadar genişlet
       const ovR = p.ov ? Math.max(4, Math.round(((p.it.ocr && p.it.ocr.fontsize) || 40) * 0.09), Math.round(((p.it.ocr && p.it.ocr.strokeWidth) || 0) * 0.7)) : 0;
       const mk = p.ov ? { mask: geom.dilate(p.ov.mask, p.ov.width, p.ov.height, ovR), width: p.ov.width, height: p.ov.height, area: p.area, radius: ovR } : cleanup.itemMask(p.it, p.area, prof.cleanup.dilatePx);
+      // Balon içindeki TÜM mürekkep (OCR poligonu dışında kalan kopuk nokta / taşan satır / ünlem dahil) maskeye eklenir
+      if (!p.ov && p.it.bubble && p.it.bubble.rect && (p.it.type === "dialog" || p.it.type === "narration")) {
+        const raw = cleanup.bubbleInkMask(sub(p.area), mk.width, mk.height, p.area, p.it.bubble, p.it.box);
+        p.bubbleFlat = raw.regionPx > 50 && raw.bgStd < 7; // balon zemini düz mü (tram/gradyan yok)
+        const ink = geom.dilate(raw, mk.width, mk.height, 2);
+        for (let i = 0; i < ink.length; i++) if (ink[i]) mk.mask[i] = 255;
+      }
       // Elle düzeltilmiş maske varsa öğe maskesiyle kesiştir/birleştir
       if (manualSel && geom.rectIntersect(p.area, manualSel.bounds)) {
         const w = mk.width, sm = manualSel;
@@ -411,6 +458,8 @@ class Pipeline {
       let decision;
       if (methodSetting === "auto") {
         decision = cleanup.chooseMethod(stats, p.it, { contentAware: true });
+        // Kapalı balon + düz zemin: balon rengiyle yerel düz dolgu (kredisiz, balon içindeki tüm parçalar dahil)
+        if (p.bubbleFlat && (p.it.type === "dialog" || p.it.type === "narration")) { decision = { method: "flat", reason: "Kapalı balon, düz zemin → balon rengiyle yerel düz dolgu (kredisiz)." }; stats.medianHex = p.it.bubble.bg || stats.medianHex; }
         // Çizim üstü SFX: Torii dokuyu bulanıklaştırıyor → SFX yöntemi (Adobe öğretildiyse Adobe, yoksa İçerik Duyarlı Dolgu)
         if (p.it && p.it.type === "sfx" && stats.kind !== "flat") {
           const m = this.sfxMethod();
@@ -428,58 +477,31 @@ class Pipeline {
       const decision = methodSetting === "auto" ? cleanup.chooseMethod(stats, null, {}) : { method: methodSetting, reason: "Elle seçilen yöntem" };
       plan.push({ item: null, area, mask: m, rgb, stats, decision });
     }
-    // TAMAMEN OTOMATİK: Adobe yöntemi otomatik çağrılamıyorsa hiçbir şey kullanıcıya devredilmez → otomatik yedek
+    // TAMAMEN OTOMATİK: Üretken Dolgu bu oturumda çalışmadıysa doğrudan otomatik yedek (kullanıcıya hiçbir şey devredilmez)
     for (const p of plan) {
-      const m = p.decision.method;
-      if ((m === "adobeGenerative" || m === "adobeRemove") && !this.adobeTemplate(m)) {
-        const why = m === "adobeRemove" ? "Adobe Kaldır'ın eklenti komutu yok" : "Adobe Üretken Dolgu bu Photoshop'ta panelden çalışmadı";
-        const sfxArt = p.item && p.item.type === "sfx" && p.stats.kind !== "flat";
-        const auto = sfxArt ? { method: "contentAware" } : cleanup.chooseMethod(p.stats, p.item, { contentAware: true });
-        p.decision = { method: auto.method, reason: `${why} → otomatik ${cleanup.METHODS[auto.method].label}.` };
+      if (p.decision.method === "adobeGenerative" && this._adobeFail) {
+        p.decision = { method: "contentAware", reason: `Adobe Üretken Dolgu bu oturumda çalışmadı (${String(this._adobeFail).slice(0, 60)}) → otomatik İçerik Duyarlı Dolgu.` };
       }
+      if (p.decision.method === "firefly" && !this.firefly) p.decision = Object.assign(cleanup.chooseMethod(p.stats, p.item, { contentAware: true }), { reason: "Firefly Services kurulu değil → otomatik yöntem." });
     }
     if (opts.decideOnly) return plan; // yalnızca yöntem kararları (API çağrısı yok)
-    // Adobe'ye geçiş kullanıcı onayı ister
-    // (Onay penceresi yok — kullanıcı tam otomatik istiyor; Adobe yalnızca ayarlarda Adobe/Otomatik seçiliyse kullanılır)
     // Torii inpaint: tek istekte birleşik maske
     const toriiPlans = plan.filter((p) => p.decision.method === "torii");
-    if (toriiPlans.length) {
-      let ua = null;
-      for (const p of toriiPlans) ua = geom.rectUnion(ua, p.area);
-      ua = geom.rectRound(ua);
-      const W = ua.right - ua.left, H = ua.bottom - ua.top;
-      const um = new Uint8Array(W * H);
-      for (const p of toriiPlans) {
-        for (let y = 0; y < p.mask.height; y++) for (let x = 0; x < p.mask.width; x++) {
-          if (p.mask.mask[y * p.mask.width + x]) um[(p.area.top - ua.top + y) * W + (p.area.left - ua.left + x)] = 255;
-        }
-      }
-      const imgBytes = png.encodePng(sub(ua), W, H, 3, 4);
-      const maskBytes = png.encodePng(um, W, H, 1, 6);
-      this.progress(`Torii Inpaint (${toriiPlans.length} öğe)…`, 0.5);
-      const t0 = Date.now();
-      const dataUrl = await this.withPaidRequest("Inpaint", () => this.client.inpaint({ bytes: imgBytes, mime: "image/png", width: W, height: H }, { bytes: maskBytes, width: W, height: H }));
-      const dec = await this.decodeImage(dataUrl, "Inpaint sonucu");
-      if (dec.width !== W || dec.height !== H) throw new Error(`Inpaint sonucu boyutu farklı (${dec.width}×${dec.height}, beklenen ${W}×${H}).`);
-      for (const p of toriiPlans) {
-        const w = p.mask.width, h = p.mask.height, res = new Uint8Array(w * h * 3);
-        for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
-          const si = ((p.area.top - ua.top + y) * W + (p.area.left - ua.left + x)) * dec.channels, di = (y * w + x) * 3;
-          res[di] = dec.data[si]; res[di + 1] = dec.data[si + 1]; res[di + 2] = dec.data[si + 2];
-        }
-        p.patch = cleanup.patchFromResult(res, 3, w, h, p.mask.mask);
-        p.ms = Math.round((Date.now() - t0) / toriiPlans.length); p.cost = 0.02 / toriiPlans.length;
-      }
-    }
+    if (toriiPlans.length) await this.toriiPatches(toriiPlans);
     // Firefly Services (sunucu vekili): öğe başına maskeli dolgu
     for (const p of plan.filter((q) => q.decision.method === "firefly")) {
-      if (!this.firefly) throw new Error("Firefly Services yapılandırılmadı.");
       const t0 = Date.now();
-      const r = await this.firefly.fill(png.encodePng(p.rgb, p.mask.width, p.mask.height, 3, 4), png.encodePng(p.mask.mask, p.mask.width, p.mask.height, 1, 6), opts.prompt || "");
-      const dec = r.mime === "image/png" ? png.decodePng(r.bytes) : await modal("Firefly sonucunu çöz", () => pixels.decodeViaPhotoshop(r.bytes, "jpg"), {});
-      if (dec.width !== p.mask.width || dec.height !== p.mask.height) throw new Error("Firefly sonucu boyutu farklı.");
-      p.patch = cleanup.patchFromResult(dec.data, dec.channels, dec.width, dec.height, p.mask.mask);
-      p.ms = Date.now() - t0; p.cost = null;
+      try {
+        const r = await this.firefly.fill(png.encodePng(p.rgb, p.mask.width, p.mask.height, 3, 4), png.encodePng(p.mask.mask, p.mask.width, p.mask.height, 1, 6), opts.prompt || "");
+        const dec = r.mime === "image/png" ? png.decodePng(r.bytes) : await modal("Firefly sonucunu çöz", () => pixels.decodeViaPhotoshop(r.bytes, "jpg"), {});
+        if (dec.width !== p.mask.width || dec.height !== p.mask.height) throw new Error("Firefly sonucu boyutu farklı");
+        p.patch = cleanup.patchFromResult(dec.data, dec.channels, dec.width, dec.height, p.mask.mask);
+        p.ms = Date.now() - t0; p.cost = null;
+      } catch (e) {
+        // Otomatik yedek: aynı öğe yerel yöntemle (düz zemin → düz dolgu, değilse İçerik Duyarlı)
+        const alt = p.stats.kind === "flat" ? "flat" : "contentAware";
+        p.decision = { method: alt, reason: `Firefly Services çalışmadı (${String(e.message).slice(0, 60)}) → otomatik ${cleanup.METHODS[alt].label}.` };
+      }
     }
     for (const p of plan.filter((q) => q.decision.method === "flat")) {
       const t0 = Date.now();
@@ -503,16 +525,21 @@ class Pipeline {
         }
         await this.persistInModal(sess);
       }, { documentID: t.docId, historyName: `Temizlik (${plan.length} öğe)` });
-      for (const kind of ["adobeRemove", "adobeGenerative"]) {
-        const ps = plan.filter((p) => p.decision.method === kind);
-        if (!ps.length) continue;
-        // Her zaman otomatik: komut çalışmazsa öğe öğe İçerik Duyarlı Dolgu'ya düşer (adobeReplayClean içinde)
-        await this.adobeReplayClean(sess, t, ps, kind, this.adobeTemplate(kind), opts.prompt);
-      }
+      // Çizim üstü SFX: Üretken Dolgu → (olmazsa) İçerik Duyarlı → (olmazsa) Torii; öğe öğe, otomatik
+      const gen = plan.filter((p) => p.decision.method === "adobeGenerative");
+      if (gen.length) await this.generativeClean(sess, t, gen, opts.prompt);
       pushHistory(sess.state, { op: "clean", n: plan.length, methods: plan.map((p) => p.decision.method) });
       this.store.touch(sess.docId, { reason: "clean", noPersist: true });
-      const summary = plan.map((p) => `${p.item ? "#" + p.item.order : "Seçim"}: ${cleanup.METHODS[(p.item && p.item.cleanMethod) || p.decision.method].label}`).join(", ");
-      this.hooks.notify(`Temizlik tamam. ${summary}`, "ok");
+      // Sonuç mesajı yalnızca GERÇEKTEN temizlenenleri sayar; yöntem ve nedeni yazılır
+      const label = (p) => (cleanup.METHODS[(p.item && p.item.cleanMethod) || p.decision.method] || {}).label || p.decision.method;
+      const items = plan.filter((p) => p.item);
+      const done = items.filter((p) => p.item.status.cleaned);
+      const counts = {};
+      for (const p of done) counts[label(p)] = (counts[label(p)] || 0) + 1;
+      const how = Object.keys(counts).map((k) => `${counts[k]} × ${k}`).join(", ");
+      const fallbacks = plan.filter((p) => /→ otomatik|→ Torii/.test(p.decision.reason || "")).map((p) => `${p.item ? "#" + p.item.order : "Seçim"}: ${p.decision.reason}`);
+      if (done.length === items.length) this.hooks.notify(`Temizlik: ${done.length} öğe temizlendi (${how || "seçim"}).${fallbacks.length ? " Yedek yöntem: " + fallbacks.slice(0, 2).join(" | ") : ""}`, fallbacks.length ? "warn" : "ok");
+      else this.hooks.notify(`Temizlik eksik: ${done.length}/${items.length} öğe temizlendi. Kalanlar listede "T" işaretsiz.`, "warn");
       return plan;
     });
   }
@@ -555,153 +582,154 @@ class Pipeline {
   }
 
   /**
-   * Çizim üstü SFX temizlik yöntemi. Profil ayarı "auto" ise:
-   * öğretilmiş Adobe Üretken Dolgu → öğretilmiş Adobe Kaldır → Photoshop İçerik Duyarlı Dolgu (yerel, kredisiz).
+   * Çizim üstü SFX temizlik yöntemi. "auto" (varsayılan): Adobe Üretken Dolgu (panelden doğrudan çağrı) →
+   * çalışmazsa İçerik Duyarlı Dolgu → o da çalışmazsa Torii Inpaint. Hiçbir adımda kullanıcıdan işlem istenmez.
+   * Üretken Dolgu bu panel oturumunda bir kez başarısız olursa oturum boyunca tekrar denenmez (her deneme zaman kaybı).
    */
   sfxMethod() {
     const prof = this.profile(this.store.active && this.store.active.state);
     const pref = (prof.cleanup && prof.cleanup.sfxMethod) || "auto";
-    if (pref !== "auto") return pref;
-    if (this.adobeTemplate("adobeGenerative")) return "adobeGenerative"; // otomatik denenir, olmazsa İçerik Duyarlı
-    return "contentAware";
-  }
-
-  /** Seçili Adobe işlemi + model için öğretilmiş komut (yoksa null). */
-  adobeTemplate(kind) {
-    const A = this.settings.adobe || {};
-    const list = A.templates || [];
-    const want = kind === "adobeRemove" ? "remove" : "generative";
-    const rec = list.find((x) => x.kind === want && (want === "remove" || x.model === (A.model || "firefly")));
-    if (rec) return rec;
-    // Üretken Dolgu: doğrudan çağrı otomatik denenir; bu Photoshop'ta başarısız olduysa (directFailed) artık denenmez
-    if (want === "generative" && !A.directFailed) return require("./ps/adobe").builtinGenerativeTemplate();
-    return null;
-  }
-
-  /**
-   * Öğretilmiş Adobe komutunu öğe öğe çalıştırır.
-   *  Kaldır: Temizlik grubunda orijinal alanın kopyası olan katman → seçim = maske → komut → katman maskesi (orijinal dokunulmaz).
-   *  Üretken dolgu: seçim = maske → komut → Photoshop'un oluşturduğu üretken katman Temizlik grubuna taşınıp öğeye bağlanır.
-   */
-  async adobeReplayClean(sess, t, plans, kind, tpl, prompt) {
-    const adobe = require("./ps/adobe");
-    const doc = getDoc(t.docId);
-    const A = this.settings.adobe || (this.settings.adobe = {});
-    let done = 0;
-    for (const p of plans) {
-      // Komut yoksa ya da bu oturumda zaten başarısız olduysa: doğrudan otomatik yedek
-      if (!tpl || (kind === "adobeGenerative" && A.directFailed)) {
-        p.decision = { method: "contentAware", reason: `${cleanup.METHODS[kind].label} kullanılamıyor → otomatik İçerik Duyarlı Dolgu.` };
-        await modal("İçerik Duyarlı Dolgu", async () => { const g = await this.ensureStructure(t); await this.contentAwareClean(sess, t, g, p); await this.persistInModal(sess); }, { documentID: t.docId, historyName: `Temizlik #${p.item ? p.item.order : "seçim"}` });
-        done++; continue;
-      }
-      this.progress(`Adobe ${kind === "adobeRemove" ? "Kaldır" : "Üretken dolgu"} ${done + 1}/${plans.length}`, done / plans.length);
-      try {
-        await this.adobeOne(sess, t, p, kind, tpl, prompt, adobe, doc);
-        if (kind === "adobeGenerative" && !A.directVerified) { A.directVerified = true; A.directVerifiedAt = new Date().toISOString(); this.saveHook(); }
-      } catch (e) {
-        // Otomatik yedek: aynı öğe İçerik Duyarlı Dolgu ile; bu Photoshop'ta Adobe bir daha denenmez
-        log("warn", `Adobe ${kind} başarısız (#${p.item ? p.item.order : "-"}): ${e.message} → İçerik Duyarlı Dolgu`);
-        if (kind === "adobeGenerative") { A.directFailed = true; A.directFailReason = String(e.message).slice(0, 200); A.directVerified = false; this.saveHook(); }
-        await pixels.deselect().catch(() => {});
-        p.decision = { method: "contentAware", reason: `Adobe ${kind === "adobeRemove" ? "Kaldır" : "Üretken Dolgu"} çalışmadı (${String(e.message).slice(0, 80)}) → otomatik İçerik Duyarlı Dolgu.` };
-        await modal("İçerik Duyarlı Dolgu", async () => { const g = await this.ensureStructure(t); await this.contentAwareClean(sess, t, g, p); await this.persistInModal(sess); }, { documentID: t.docId, historyName: `Temizlik #${p.item ? p.item.order : "seçim"}` });
-      }
-      done++;
-    }
+    if (pref === "auto" || pref === "adobeGenerative") return this._adobeFail ? "contentAware" : "adobeGenerative";
+    return pref;
   }
 
   saveHook() { try { if (this.hooks.saveSettings) this.hooks.saveSettings(); } catch (e) { /* yok */ } }
 
-  async adobeOne(sess, t, p, kind, tpl, prompt, adobe, doc) {
-    {
-      await modal("Adobe temizlik", async () => {
+  /** Üretken Dolgu'nun son sonucu (panelde bilgi olarak gösterilir). */
+  _adobeStatus(ok, reason) {
+    const A = this.settings.adobe || (this.settings.adobe = {});
+    A.last = { ok: !!ok, reason: reason ? String(reason).slice(0, 200) : "", at: new Date().toISOString() };
+    if (!ok) this._adobeFail = A.last.reason || "bilinmiyor";
+    this.saveHook();
+  }
+
+  /**
+   * Üretken Dolgu ile öğe öğe temizlik. Başarısız öğe otomatik İçerik Duyarlı Dolgu'ya, o da olmazsa Torii Inpaint'e düşer.
+   * Her öğe ayrı geçmiş adımıdır; sonuç katmanına KENDİ maskemiz uygulanır (maske dışı piksel değişmez).
+   */
+  async generativeClean(sess, t, plans, prompt) {
+    const adobe = require("./ps/adobe");
+    const toTorii = [];
+    for (let k = 0; k < plans.length; k++) {
+      const p = plans[k];
+      this.checkCancel();
+      if (!this._adobeFail) {
+        this.progress(`Adobe Üretken Dolgu ${k + 1}/${plans.length}`, k / plans.length);
+        try {
+          await this.generativeOne(sess, t, p, prompt, adobe);
+          const A = this.settings.adobe || {};
+          if (!(A.last && A.last.ok)) this._adobeStatus(true);
+          continue;
+        } catch (e) {
+          log("warn", `Üretken Dolgu başarısız (#${p.item ? p.item.order : "-"}): ${e.message} → İçerik Duyarlı Dolgu`);
+          this._adobeStatus(false, e.message);
+          await pixels.deselect().catch(() => {});
+        }
+      }
+      const why = `Adobe Üretken Dolgu kullanılamadı (${String(this._adobeFail).slice(0, 80)}) → otomatik İçerik Duyarlı Dolgu.`;
+      p.decision = { method: "contentAware", reason: why };
+      this.progress(`İçerik Duyarlı Dolgu ${k + 1}/${plans.length}`, k / plans.length);
+      try {
+        await modal("İçerik Duyarlı Dolgu", async () => { const g = await this.ensureStructure(t); await this.contentAwareClean(sess, t, g, p); await this.persistInModal(sess); }, { documentID: t.docId, historyName: `Temizlik #${p.item ? p.item.order : "seçim"}` });
+      } catch (e2) {
+        log("warn", `İçerik Duyarlı Dolgu başarısız (#${p.item ? p.item.order : "-"}): ${e2.message} → Torii Inpaint`);
+        await pixels.deselect().catch(() => {});
+        p.decision = { method: "torii", reason: `${why.replace(/\.$/, "")}; İçerik Duyarlı da çalışmadı (${String(e2.message).slice(0, 60)}) → Torii Inpaint.` };
+        toTorii.push(p);
+      }
+    }
+    if (toTorii.length) {
+      await this.toriiPatches(toTorii);
+      await modal("Temizlik (Torii)", async () => {
         const g = await this.ensureStructure(t);
-        const w = p.mask.width, h = p.mask.height;
-        if (kind === "adobeRemove") {
-          let layerId = p.item && p.item.cleanLayerId != null && findLayer(doc, p.item.cleanLayerId) ? p.item.cleanLayerId : null;
-          if (layerId == null) layerId = await docs.makePixelLayerIn(t.docId, g.clean, p.item ? `Temizlik #${p.item.order} · ${p.item.id.slice(-4)}` : "Temizlik · seçim");
-          const rgba = new Uint8Array(w * h * 4);
-          for (let i = 0; i < w * h; i++) { rgba[i * 4] = p.rgb[i * 3]; rgba[i * 4 + 1] = p.rgb[i * 3 + 1]; rgba[i * 4 + 2] = p.rgb[i * 3 + 2]; rgba[i * 4 + 3] = 255; }
-          await pixels.writeLayerPixels(t.docId, layerId, rgba, w, h, p.area.left, p.area.top);
-          await bp({ _obj: "select", _target: [{ _ref: "layer", _id: layerId }], makeVisible: false });
-          await pixels.maskToSelection(t.docId, p.mask.mask, w, h, p.area.left, p.area.top);
-          await adobe.replay(tpl, { docId: t.docId, layerId, prompt: null });
-          await pixels.deselect();
-          await pixels.writeLayerMask(t.docId, layerId, p.mask.mask, w, h, p.area.left, p.area.top);
-          if (p.item) p.item.cleanLayerId = layerId;
-        } else {
-          const before = new Set(require("./ps/api").allLayers(doc).map((l) => l.id));
-          const top = findLayer(doc, g.clean);
-          const anchor = top && top.layers && top.layers.length ? top.layers[0].id : g.clean;
-          await bp({ _obj: "select", _target: [{ _ref: "layer", _id: anchor }], makeVisible: false });
-          await pixels.maskToSelection(t.docId, p.mask.mask, w, h, p.area.left, p.area.top);
-          await adobe.replay(tpl, { docId: t.docId, layerId: anchor, prompt: prompt != null ? prompt : (this.settings.adobe && this.settings.adobe.prompt) || "" });
-          await pixels.deselect();
-          const created = require("./ps/api").allLayers(doc).find((l) => !before.has(l.id));
-          if (!created) throw new Error("Üretken dolgu yeni katman oluşturmadı (Adobe oturumu/kredi?).");
-          const grp = findLayer(doc, g.clean);
-          if (!created.parent || created.parent.id !== g.clean) created.move(grp, require("./ps/api").constants.ElementPlacement.PLACEINSIDE);
-          created.name = p.item ? `Üretken #${p.item.order}` : "Üretken · seçim";
-          if (p.item) {
-            if (p.item.cleanLayerId != null && findLayer(doc, p.item.cleanLayerId)) await docs.deleteLayer(t.docId, p.item.cleanLayerId);
-            p.item.cleanLayerId = created.id;
-          }
-        }
-        if (p.item) {
-          p.item.status.cleaned = true; p.item.awaitingHandoff = false;
-          p.item.cleanMethod = kind; p.item.cleanReason = `Adobe ${kind === "adobeRemove" ? "Kaldır" : "Üretken dolgu (" + (tpl.modelLabel || tpl.model) + ")"} — otomatik.`;
-        }
+        for (const p of toTorii) await this.writeCleanPatch(sess, t, g, p);
         await this.persistInModal(sess);
-      }, { documentID: t.docId, historyName: `Adobe temizlik #${p.item ? p.item.order : "seçim"}` });
+      }, { documentID: t.docId, historyName: `Temizlik (${toTorii.length} öğe, Torii)` });
     }
   }
 
-  /** Komut öğretilmemişse: maske seçime aktarılır, işlem Photoshop arayüzünde tamamlanır. */
-  async adobeHandoff(sess, t, plans, kind) {
+  /** Tek öğe: maske → seçim → syntheticFill → Photoshop'un oluşturduğu katman Temizlik grubuna taşınır, maskemiz uygulanır. */
+  async generativeOne(sess, t, p, prompt, adobe) {
+    const api = require("./ps/api");
+    const doc = getDoc(t.docId);
+    await modal("Adobe Üretken Dolgu", async () => {
+      const g = await this.ensureStructure(t);
+      const w = p.mask.width, h = p.mask.height;
+      const before = new Set(api.allLayers(doc).map((l) => l.id));
+      const top = findLayer(doc, g.clean);
+      const anchor = top && top.layers && top.layers.length ? top.layers[0].id : g.clean;
+      await bp({ _obj: "select", _target: [{ _ref: "layer", _id: anchor }], makeVisible: false });
+      await pixels.maskToSelection(t.docId, p.mask.mask, w, h, p.area.left, p.area.top);
+      try {
+        await adobe.generativeFill({ docId: t.docId, layerId: anchor, prompt: prompt != null ? prompt : (this.settings.adobe && this.settings.adobe.prompt) || "" });
+      } finally { await pixels.deselect().catch(() => {}); }
+      const created = api.allLayers(doc).find((l) => !before.has(l.id));
+      if (!created) throw new Error("Üretken Dolgu yeni katman oluşturmadı (Adobe oturumu veya üretken kredi?).");
+      const grp = findLayer(doc, g.clean);
+      if (!created.parent || created.parent.id !== g.clean) await created.move(grp, api.constants.ElementPlacement.PLACEINSIDE);
+      created.name = p.item ? `Üretken #${p.item.order} · ${p.item.id.slice(-4)}` : "Üretken · seçim";
+      // Kendi maskemiz: Adobe sonucu yalnızca maske içinde görünür (maske dışı pikseller değişmez)
+      // putLayerMask yazılmayan bölgeyi BEYAZ (görünür) bırakır → maske katmanın TÜM sınırını kapsar, öğe maskesi dışı siyah
+      try {
+        const lb = created.bounds, dr = { left: 0, top: 0, right: t.w, bottom: t.h };
+        const mr = geom.rectRound(geom.rectIntersect(geom.rectUnion({ left: lb.left, top: lb.top, right: lb.right, bottom: lb.bottom }, p.area), dr) || p.area);
+        const MW = mr.right - mr.left, MH = mr.bottom - mr.top, full = new Uint8Array(MW * MH);
+        for (let y = 0; y < h; y++) {
+          const ty = p.area.top - mr.top + y;
+          if (ty < 0 || ty >= MH) continue;
+          for (let x = 0; x < w; x++) { const tx = p.area.left - mr.left + x; if (tx >= 0 && tx < MW && p.mask.mask[y * w + x]) full[ty * MW + tx] = 255; }
+        }
+        await pixels.writeLayerMask(t.docId, created.id, full, MW, MH, mr.left, mr.top);
+      }
+      catch (e) { log("warn", "Üretken katmana maske yazılamadı; Photoshop'un seçimden oluşturduğu maske geçerli", e.message); }
+      if (p.item) {
+        if (p.item.cleanLayerId != null && findLayer(doc, p.item.cleanLayerId)) await docs.deleteLayer(t.docId, p.item.cleanLayerId);
+        p.item.cleanLayerId = created.id; p.item.status.cleaned = true;
+        p.item.cleanMethod = "adobeGenerative"; p.item.cleanReason = "Çizim üstü SFX → Adobe Üretken Dolgu (Firefly), otomatik.";
+      }
+      await this.persistInModal(sess);
+    }, { documentID: t.docId, historyName: `Üretken Dolgu #${p.item ? p.item.order : "seçim"}` });
+  }
+
+  /** Torii Inpaint: planların maskeleri tek istekte (birleşik alan) gönderilir; her plana p.patch yazılır. */
+  async toriiPatches(plans) {
     let ua = null;
     for (const p of plans) ua = geom.rectUnion(ua, p.area);
     ua = geom.rectRound(ua);
-    const W = ua.right - ua.left, H = ua.bottom - ua.top, um = new Uint8Array(W * H);
-    for (const p of plans) for (let y = 0; y < p.mask.height; y++) for (let x = 0; x < p.mask.width; x++) if (p.mask.mask[y * p.mask.width + x]) um[(p.area.top - ua.top + y) * W + (p.area.left - ua.left + x)] = 255;
-    await modal("Maskeyi seçime aktar", async () => {
-      const g = await this.ensureStructure(t);
-      if (kind === "adobeRemove") {
-        // Kaldır bir piksel katmanında çalışır: orijinale dokunmamak için Temizlik grubunda orijinal alanların kopyası
-        const lid = await docs.makePixelLayerIn(t.docId, g.clean, "Temizlik · Adobe Kaldır");
-        for (const p of plans) {
-          const w = p.mask.width, h = p.mask.height, rgba = new Uint8Array(w * h * 4);
-          for (let i = 0; i < w * h; i++) { rgba[i * 4] = p.rgb[i * 3]; rgba[i * 4 + 1] = p.rgb[i * 3 + 1]; rgba[i * 4 + 2] = p.rgb[i * 3 + 2]; rgba[i * 4 + 3] = 255; }
-          await pixels.writeLayerPixels(t.docId, lid, rgba, w, h, p.area.left, p.area.top);
-          if (p.item) p.item.cleanLayerId = lid;
-        }
-        await bp({ _obj: "select", _target: [{ _ref: "layer", _id: lid }], makeVisible: false });
-      } else if (g.clean != null) await bp({ _obj: "select", _target: [{ _ref: "layer", _id: g.clean }], makeVisible: false });
-      await pixels.maskToSelection(t.docId, um, W, H, ua.left, ua.top);
-    }, { documentID: t.docId, historyName: "Temizlik maskesi → seçim" });
-    const remove = kind === "adobeRemove";
-    for (const p of plans) if (p.item) { p.item.cleanMethod = kind || "adobeGenerative"; p.item.cleanReason = `Photoshop ${remove ? "Kaldır" : "Üretken Dolgu"} arayüzüne devredildi`; p.item.awaitingHandoff = true; }
-    this.hooks.notify(remove
-      ? "Maske seçime aktarıldı. Bağlamsal çubukta 'Kaldır'a basın. İpucu: Temizlik sekmesinde 'Öğret' ile bunu bir kez kaydederseniz sonraki öğeler otomatik yapılır."
-      : "Maske seçime aktarıldı. Bağlamsal çubukta 'Üretken dolgu' → modeli seçip 'Oluştur'. Bitince öğede 'Adobe sonucunu bağla'. İpucu: 'Öğret' ile kaydederseniz sonrakiler otomatik yapılır.", "info");
+    const W = ua.right - ua.left, H = ua.bottom - ua.top;
+    const um = new Uint8Array(W * H), urgb = new Uint8Array(W * H * 3);
+    for (const p of plans) {
+      const pw = p.mask.width;
+      for (let y = 0; y < p.mask.height; y++) {
+        const ro = (p.area.top - ua.top + y) * W + (p.area.left - ua.left);
+        urgb.set(p.rgb.subarray(y * pw * 3, (y + 1) * pw * 3), ro * 3);
+        for (let x = 0; x < pw; x++) if (p.mask.mask[y * pw + x]) um[ro + x] = 255;
+      }
+    }
+    const imgBytes = png.encodePng(urgb, W, H, 3, 4);
+    const maskBytes = png.encodePng(um, W, H, 1, 6);
+    this.progress(`Torii Inpaint (${plans.length} öğe)…`, 0.5);
+    const t0 = Date.now();
+    const dataUrl = await this.withPaidRequest("Inpaint", () => this.client.inpaint({ bytes: imgBytes, mime: "image/png", width: W, height: H }, { bytes: maskBytes, width: W, height: H }), `inp|${bytesKey(imgBytes)}|${bytesKey(maskBytes)}`);
+    const dec = await this.decodeImage(dataUrl, "Inpaint sonucu");
+    if (dec.width !== W || dec.height !== H) throw new Error(`Inpaint sonucu boyutu farklı (${dec.width}×${dec.height}, beklenen ${W}×${H}).`);
+    for (const p of plans) {
+      const w = p.mask.width, h = p.mask.height, res = new Uint8Array(w * h * 3);
+      for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+        const si = ((p.area.top - ua.top + y) * W + (p.area.left - ua.left + x)) * dec.channels, di = (y * w + x) * 3;
+        res[di] = dec.data[si]; res[di + 1] = dec.data[si + 1]; res[di + 2] = dec.data[si + 2];
+      }
+      p.patch = cleanup.patchFromResult(res, 3, w, h, p.mask.mask);
+      p.ms = Math.round((Date.now() - t0) / plans.length); p.cost = 0.02 / plans.length;
+    }
   }
 
-  /** Kullanıcının yerel araçla ürettiği en üstteki yeni katmanı öğeye temizlik katmanı olarak bağlar. */
-  async linkHandoffResult(itemId) {
-    const t = this.captureTarget();
-    const s = this.store.session(t.docId);
-    const it = s.state.items.find((i) => i.id === itemId);
-    const doc = getDoc(t.docId);
-    const L = doc.activeLayers[0];
-    if (!it || !L) throw new Error("Öğe veya etkin katman yok.");
-    await modal("Sonucu bağla", async () => {
-      const g = await this.ensureStructure(t);
-      const grp = findLayer(doc, g.clean);
-      if (L.parent == null || L.parent.id !== g.clean) L.move(grp, require("./ps/api").constants.ElementPlacement.PLACEINSIDE);
-      it.cleanLayerId = L.id; it.status.cleaned = true; it.awaitingHandoff = false;
-      await this.persistInModal(s);
-    }, { documentID: t.docId, historyName: "Temizlik sonucunu bağla" });
-    this.store.touch(t.docId, { noPersist: true });
+  /** Durdur düğmesi: adımlar arasında kontrol edilir; yarım kalan adım tamamlanır, sonraki başlamaz. */
+  checkCancel() {
+    if (!this.cancelRequested) return;
+    const e = new Error("Kullanıcı durdurdu — sonraki adımlar çalıştırılmadı.");
+    e.cancelled = true;
+    throw e;
   }
 
   // ------------------------------------------------------------------ DİZGİ
@@ -798,10 +826,11 @@ class Pipeline {
     if (item.direction === "top_to_bottom") { box.w = Math.max(b.w, b.h * 0.6); box.h = Math.max(b.h, box.w * 0.6); box.angle = 0; }
     // Balon bulunduysa: yazı balonun ORTASINA, balonun içine sığan (elips için ~%70) kutuya yerleşir
     const bub = item.bubble;
-    if (bub && (item.type === "dialog" || item.type === "narration")) {
+    if (bub && !bub.shared && (item.type === "dialog" || item.type === "narration")) {
       box.cx = bub.cx; box.cy = bub.cy;
-      box.w = Math.max(b.w * 0.9, bub.w * 0.70);
-      box.h = Math.max(b.h * 0.9, bub.h * 0.70);
+      const k = bub.rectangular ? 0.86 : 0.70; // dikdörtgen kutu daha fazla alan verir
+      box.w = Math.max(b.w * 0.9, bub.w * k);
+      box.h = Math.max(b.h * 0.9, bub.h * k);
       box.w = Math.min(box.w, bub.w * 0.86); box.h = Math.min(box.h, bub.h * 0.86);
       box.angle = 0;
     }
@@ -815,20 +844,26 @@ class Pipeline {
     let items = (await this.scopeItems(scope, t)).filter((i) => this.filtersAllow(i) && (i.translation || "").trim());
     if (!items.length) { this.hooks.notify("Dizgi yapılacak çevrilmiş öğe yok.", "info"); return null; }
     const warnings = [];
+    // Kurulu çizgi roman fontu yoksa (yalnız Arial / Comic Sans) bir kez öneri ver
+    const fset = this.fontSet();
+    if (fset && !["CCWildWords-Roman", "CCWildWords-Regular", "WildWordsRoman", "WildWords", "AnimeAce2.0BB", "AnimeAceBB", "CCMeanwhile-Regular", "KomikaText", "Komika-Text", "ComicNeue-Regular", "Bangers-Regular", "BadaBoomBB"].some((f) => fset.has(f))) {
+      warnings.push("Kurulu çizgi roman fontu yok → Arial kullanıldı. Öneri: ücretsiz \"Comic Neue\" veya \"Bangers\" (Google Fonts) ya da \"Anime Ace\" (Blambot) kurup Photoshop'u yeniden başlatın");
+    }
     return this.applyOrDefer(t, "Dizgi", async (sess) => {
+      let okCount = 0;
       await modal("Dizgi", async () => {
         const g = await this.ensureStructure(t);
         for (let k = 0; k < items.length; k++) {
           const it = items[k];
           this.progress(`Dizgi ${k + 1}/${items.length}`, k / items.length);
-          try { await this.typesetItem(sess, t, g, it, opts, warnings); }
+          try { await this.typesetItem(sess, t, g, it, opts, warnings); okCount++; }
           catch (e) { warnings.push(`#${it.order}: ${e.message}`); log("error", "Dizgi öğe hatası", String(e.message)); }
         }
         await this.persistInModal(sess);
       }, { documentID: t.docId, historyName: `Dizgi (${items.length} öğe)` });
       this.store.touch(sess.docId, { reason: "typeset", noPersist: true });
       const over = items.filter((i) => i.overflow).length;
-      this.hooks.notify(`Dizgi tamam: ${items.length} katman.${over ? ` ${over} öğe minimum puntoda bile taşıyor (⚠ işaretli).` : ""}${warnings.length ? " Uyarılar: " + warnings.slice(0, 4).join(" | ") : ""}`, over || warnings.length ? "warn" : "ok");
+      this.hooks.notify(`${okCount === items.length ? "Dizgi" : "Dizgi EKSİK"}: ${okCount}/${items.length} katman.${over ? ` ${over} öğe minimum puntoda bile taşıyor (⚠ işaretli).` : ""}${warnings.length ? " Uyarılar: " + warnings.slice(0, 4).join(" | ") : ""}`, over || warnings.length || okCount < items.length ? "warn" : "ok");
       return items.length;
     });
   }
@@ -836,6 +871,8 @@ class Pipeline {
   /** Tek öğe: katman yoksa oluştur, varsa güncelle. Photoshop'taki elle değişiklikler manuel değer olarak korunur. */
   async typesetItem(sess, t, g, it, opts, warnings) {
     const doc = getDoc(t.docId);
+    const P = this.debug ? (this._prof = this._prof || {}) : null; // geliştirici: adım süreleri
+    const tm = async (k, f) => { if (!P) return f(); const t0 = Date.now(); try { return await f(); } finally { P[k] = (P[k] || 0) + Date.now() - t0; } };
     // Önce Photoshop'ta yapılmış elle değişiklikleri yakala (manuel değer olur), SONRA stili çözümle
     let curBefore = null;
     if (it.layerId != null && findLayer(doc, it.layerId)) {
@@ -849,11 +886,11 @@ class Pipeline {
     const box = this.typesetBox(it);
     const exists = it.layerId != null && findLayer(doc, it.layerId);
     if (!exists) {
-      const lid = await text.createTextLayer(t.docId, g.trans, it.translation, box, st, `#${it.order} ${it.translation.slice(0, 30)}`);
+      const lid = await tm("create", () => text.createTextLayer(t.docId, g.trans, it.translation, box, st, `#${it.order} ${it.translation.slice(0, 30)}`));
       it.layerId = lid;
-      await this.applyEffects(t, lid, st, warnings, it);
+      await tm("effects", () => this.applyEffects(t, lid, st, warnings, it, true));
       if (st.warpStyle && st.warpStyle !== "warpNone") await text.setWarp(t.docId, lid, st.warpStyle, st.warpBend);
-      if (st.fit) await this.fitItem(t, it, st, box);
+      if (st.fit) await tm("fit", () => this.fitItem(t, it, st, box));
     } else {
       const cur = curBefore || (await text.readTextLayer(t.docId, it.layerId));
       const desired = st.uppercase ? text.trUpper(it.translation, it.source) : it.translation;
@@ -868,7 +905,7 @@ class Pipeline {
       }
       if (!it.locks.position && st.fit && !it.manual.sizePx) await this.fitItem(t, it, st, box);
     }
-    it.lastApplied = await this.snapshotLayer(t, it.layerId);
+    it.lastApplied = await tm("snapshot", () => this.snapshotLayer(t, it.layerId));
     it.status.typeset = true;
   }
 
@@ -878,7 +915,9 @@ class Pipeline {
     it.fitSizePx = res.sizePx;
   }
 
-  async applyEffects(t, layerId, st, warnings, it) {
+  async applyEffects(t, layerId, st, warnings, it, fresh) {
+    // Yeni katmanda efekt yoktur: istenmiyorsa okumaya gerek yok (öğe başına bir Photoshop çağrısı az)
+    if (fresh && !st.strokeEnabled && !st.shadowEnabled) return;
     const cur = await text.readStrokeShadow(t.docId, layerId);
     const want = { strokeEnabled: !!st.strokeEnabled, shadowEnabled: !!st.shadowEnabled };
     if (cur.strokeEnabled === want.strokeEnabled && cur.shadowEnabled === want.shadowEnabled && (!want.strokeEnabled || (cur.strokeSize === st.strokeSize && cur.strokeColor === st.strokeColor))) return;
@@ -932,8 +971,6 @@ class Pipeline {
       s.state.orderEdited = false;
       await this.persistInModal(s);
     }, { documentID: t.docId, historyName: "Tam İşlem: sayfa sıfırlandı" });
-    this.respCache = this.respCache || {};
-    for (const k of Object.keys(this.respCache)) if (k.indexOf(t.docUid + "|") === 0) delete this.respCache[k];
     if (this.lastInpainted && this.lastInpainted.docUid === t.docUid) this.lastInpainted = null;
     this.store.selected = new Set();
     this.store.touch(t.docId, { noPersist: true });
@@ -943,8 +980,10 @@ class Pipeline {
   async _fullPage(t, scope, opts) {
     const s = this.store.session(t.docId);
     const ui = this.settings.ui;
+    let needDetect = !s.state.items.length || scope === "region";
     // Tam İşlem = HER ŞEY BAŞTAN. Sayfa kapsamında eski öğeler ve eklenti katmanları silinir.
     if (scope === "page" && s.state.items.length) {
+      needDetect = true; // kilitli öğeler kalsa da sayfa yeniden okunur (birleştirmede kilitliler korunur)
       // Onay sorulmaz (tam otomatik). Kilitli öğeler korunur; Ctrl+Z ile tek adımda geri alınabilir.
       const locked = s.state.items.filter((i) => i.locks && (i.locks.text || i.locks.style || i.locks.position)).length;
       const n = await this.resetPage(t, locked > 0);
@@ -959,9 +998,12 @@ class Pipeline {
       return true;
     }
     const allTypes = ui.filters.dialog && ui.filters.narration && ui.filters.offbubble && ui.filters.sfx;
-    const single = scope === "page" && !s.state.items.length && allTypes && !ui.bubblesOnly && ui.fullMode !== "modular";
+    // Varsayılan: Modüler (OCR 1 + çeviri ≥1 + inpaint 0,02 kredi). Tek istek (v2/upload) ölçümde sayfa başına 6–8,4 kredi.
+    const single = scope === "page" && !s.state.items.length && allTypes && !ui.bubblesOnly && ui.fullMode === "single";
+    this.runMode = single ? "tek istek" : "modüler";
     if (single) return this._fullSingleRequest(t);
-    if (!s.state.items.length || scope === "region") await this._detectPage(t, scope === "region");
+    if (needDetect) await this._detectPage(t, scope === "region");
+    this.checkCancel();
     if (ui.bubblesOnly) {
       const unconfirmed = s.state.items.filter((i) => i.type === "dialog" && !i.typeConfirmed);
       if (unconfirmed.length) {
@@ -971,7 +1013,9 @@ class Pipeline {
       }
     }
     await this._translatePage(t, scope === "region" ? "region" : scope, {});
+    this.checkCancel();
     await this._cleanPage(t, scope, {});
+    this.checkCancel();
     await this._typesetPage(t, scope, {});
     return true;
   }
@@ -984,29 +1028,24 @@ class Pipeline {
     this.progress("Görüntü okunuyor…", 0.05);
     const img = await this.readOriginalArea(t, area);
     const bytes = png.encodePng(img.data, img.width, img.height, 3, 4);
-    // Ücretli yanıt önbelleği: aynı sayfa için alınmış yanıt varsa (ör. önceki deneme sonraki adımda hata verdiyse) yeniden kullanılır.
-    this.respCache = this.respCache || {};
-    const cacheKey = `${t.docUid}|${img.width}x${img.height}|${prof.id}|${prof.translator}|${prof.targetLang}|${prof.sourceLang || "auto"}`;
-    let j = this.respCache[cacheKey];
-    if (j) {
-      this.hooks.notify("Bu sayfanın önceki Torii yanıtı yeniden kullanılıyor — yeni kredi harcanmadı.", "info");
-    } else {
-      this.progress("Torii görsel çeviri…", 0.25);
-      const byok = await this.byok();
-      j = await this.withPaidRequest("Görsel çeviri", () => this.client.translateImage({ bytes, mime: "image/png", width: img.width, height: img.height }, {
-        target_lang: prof.targetLang || "tr", source_langs_whitelist: profiles.sourceWhitelist(prof), translator: prof.translator, reasoning_effort: prof.reasoning,
-        custom_prompt: profiles.buildCustomPrompt(prof, ch), context: profiles.buildContext(prof, ch, s.state.chainContext || (ch && ch.chainContext) || ""),
-        min_font_size: this.settings.torii.minFontPx, byok,
-      }));
-      this.respCache[cacheKey] = j;
-    }
+    this.progress("Torii görsel çeviri…", 0.25);
+    const byok = await this.byok();
+    const opts = {
+      target_lang: prof.targetLang || "tr", source_langs_whitelist: profiles.sourceWhitelist(prof), translator: prof.translator, reasoning_effort: prof.reasoning,
+      custom_prompt: profiles.buildCustomPrompt(prof, ch), context: profiles.buildContext(prof, ch, s.state.chainContext || (ch && ch.chainContext) || ""),
+      min_font_size: 10,
+    };
+    // Ücretli yanıt önbelleği: aynı görsel + aynı seçenekler → önceki yanıt (kredi harcanmaz)
+    const j = await this.withPaidRequest("Görsel çeviri", () => this.client.translateImage({ bytes, mime: "image/png", width: img.width, height: img.height }, Object.assign({ byok }, opts)),
+      `img|${bytesKey(bytes)}|${JSON.stringify(opts)}|${byok ? byok.provider : ""}`);
+    if (!j || !Array.isArray(j.text)) throw new Error("Torii görsel çeviri yanıtında metin listesi yok (kredi harcanmış olabilir; yanıt önbellekte, tekrar denemek ücretsiz).");
     const incoming = classify.itemsFromUpload(j.text, { left: 0, top: 0, scale: 1 });
     incoming.forEach((i) => { i.translation = profiles.applyTurkishFixes(i.translation, prof.turkish); });
     this.progress("Temizlenmiş görsel çözülüyor…", 0.5);
     const inp = j.inpainted ? await this.decodeImage(j.inpainted, "Temizlenmiş görsel (inpainted)") : null;
     if (inp && (inp.width !== t.w || inp.height !== t.h)) throw new Error("Temizlenmiş görsel boyutu belgeyle uyuşmuyor.");
     // Türler: temizlenmiş görselde zemine bakarak (yazı silinmiş olduğundan balon içi net görünür)
-    if (inp) this.refineTypes(incoming, { data: inp.channels === 3 ? inp.data : png.convertChannels(inp.data, inp.width, inp.height, inp.channels, 3), width: inp.width, height: inp.height, bounds: { left: 0, top: 0 } }, true);
+    if (inp) this.refineTypes(incoming, { data: inp.channels === 3 ? inp.data : png.convertChannels(inp.data, inp.width, inp.height, inp.channels, 3), width: inp.width, height: inp.height, bounds: { left: 0, top: 0 } }, true, { W: t.w, H: t.h });
     this.lastInpainted = { docUid: t.docUid, img, inp }; // "Temizliği yeniden uygula" için (kredisiz)
     const result = await this.applyOrDefer(t, "Tam işlem sonuçları", async (sess) => {
       const merged = classify.mergeDetections(sess.state.items, incoming);
@@ -1046,19 +1085,31 @@ class Pipeline {
       for (const it of eligible) {
         const fs = (it.ocr && it.ocr.fontsize) || 20;
         // Çekirdek: yazı kutusu (kopuk nokta/ünlem için fs*0.8 genişletilmiş) + varsa balonun iç alanı (balon içindeki HER yazı parçası temizlenir)
-        let core = geom.rectRound(geom.rectInflate(it.textBounds || it.bounds, Math.max(4, fs * 0.8), docRect));
+        const textCore = geom.rectRound(geom.rectInflate(it.textBounds || it.bounds, Math.max(4, fs * 0.8), docRect));
+        let core = textCore;
         const bub = it.bubble && it.bubble.rect ? geom.rectRound(geom.rectInflate(it.bubble.rect, -Math.max(3, Math.min(it.bubble.w, it.bubble.h) * 0.04), docRect)) : null;
         if (bub && bub.right > bub.left && bub.bottom > bub.top) core = geom.rectUnion(core, bub);
         const reach = Math.max(fs * 2.2, Math.max(it.box.w, it.box.h) * 0.45);
         const a = geom.rectRound(geom.rectUnion(geom.rectInflate(it.textBounds || it.bounds, reach, docRect), bub ? geom.rectInflate(bub, 6, docRect) : null));
         const w = a.right - a.left, h = a.bottom - a.top;
-        const o = new Uint8Array(w * h * 3), r = new Uint8Array(w * h * 3), d = new Uint8Array(w * h);
+        const o = new Uint8Array(w * h * 3), r = new Uint8Array(w * h * 3), d = new Uint8Array(w * h), ds = new Uint16Array(w * h);
         for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
           const si = (a.top + y) * t.w + a.left + x, di = (y * w + x) * 3;
           o[di] = img.data[si * 3]; o[di + 1] = img.data[si * 3 + 1]; o[di + 2] = img.data[si * 3 + 2];
           r[di] = inp.data[si * inp.channels]; r[di + 1] = inp.data[si * inp.channels + 1]; r[di + 2] = inp.data[si * inp.channels + 2];
-          if (Math.abs(o[di] - r[di]) + Math.abs(o[di + 1] - r[di + 1]) + Math.abs(o[di + 2] - r[di + 2]) > 20) d[y * w + x] = 255; // 20: siyah zeminde koyu yazı da yakalanır
+          ds[y * w + x] = Math.abs(o[di] - r[di]) + Math.abs(o[di + 1] - r[di + 1]) + Math.abs(o[di + 2] - r[di + 2]);
         }
+        // Uyarlanır eşik: çekirdek DIŞINDAKİ farkın %95 değeri ≈ JPEG gürültüsü. Eşik gürültünün üstünde; en az 20
+        // (siyah zeminde koyu kırmızı yazı da yakalanır), en çok 60.
+        const noise = [];
+        for (let y = 0; y < h; y += 2) for (let x = 0; x < w; x += 2) {
+          const X = a.left + x, Y = a.top + y;
+          if (X >= core.left && X < core.right && Y >= core.top && Y < core.bottom) continue;
+          noise.push(ds[y * w + x]);
+        }
+        noise.sort((p, q) => p - q);
+        const thr = Math.min(60, Math.max(20, (noise.length ? noise[Math.floor(noise.length * 0.95)] : 0) + 10));
+        for (let i = 0; i < w * h; i++) if (ds[i] > thr) d[i] = 255;
         for (const b of blocked) { const k = geom.rectIntersect(b, a); if (!k) continue; for (let y = k.top; y < k.bottom; y++) for (let x = k.left; x < k.right; x++) d[(y - a.top) * w + (x - a.left)] = 0; }
         // Harfleri kelime/satır halinde birleştir; büyük SFX'te harf aralığı geniş olduğundan kutu boyutu da hesaba katılır
         const joinR = Math.max(2, Math.round(Math.max(fs * 0.32, Math.sqrt(it.box.w * it.box.h) * 0.07)));
@@ -1081,10 +1132,15 @@ class Pipeline {
         m = geom.dilate(m, w, h, 2);
         for (const b of blocked) { const k = geom.rectIntersect(b, a); if (!k) continue; for (let y = k.top; y < k.bottom; y++) for (let x = k.left; x < k.right; x++) m[(y - a.top) * w + (x - a.left)] = 0; }
         // Torii bu yazıyı SİLMEDİYSE (ör. çizim üstü SFX'e dokunmuyor): maskeyi yazının renginden çıkar, kendi yöntemimizle temizle
-        const coreLocal = { left: core.left - a.left, top: core.top - a.top, right: core.right - a.left, bottom: core.bottom - a.top };
+        // Karar YAZI çekirdeğine göre (balonun tamamına göre değil): yazı kutusunda neredeyse hiç fark yoksa Torii silmemiştir
+        const coreLocal = { left: textCore.left - a.left, top: textCore.top - a.top, right: textCore.right - a.left, bottom: textCore.bottom - a.top };
         const coreArea = Math.max(1, (coreLocal.right - coreLocal.left) * (coreLocal.bottom - coreLocal.top));
-        if (geom.maskCount(m) < coreArea * 0.01) {
-          const cm = cleanup.colorTextMask(o, w, h, coreLocal, it.ocr && it.ocr.textColor, {
+        let inCore = 0;
+        for (let y = coreLocal.top; y < coreLocal.bottom; y++) for (let x = coreLocal.left; x < coreLocal.right; x++) if (m[y * w + x]) inCore++;
+        if (inCore < coreArea * 0.01) {
+          // Balonda: renkten bağımsız balon içi mürekkep maskesi; balon dışında: yazı rengine göre maske
+          const inBubble = it.bubble && it.bubble.rect && (it.type === "dialog" || it.type === "narration");
+          const cm = inBubble ? geom.dilate(cleanup.bubbleInkMask(o, w, h, a, it.bubble, it.box), w, h, 2) : cleanup.colorTextMask(o, w, h, coreLocal, it.ocr && it.ocr.textColor, {
             joinR: Math.min(joinR, Math.max(3, Math.round(fs * 0.2))),
             strokeR: Math.max(3, Math.round(((it.ocr && it.ocr.strokeWidth) || 6) * 0.7)),
             // SFX harfleri kalın: ince çizim çizgilerini maskeden at
@@ -1098,7 +1154,7 @@ class Pipeline {
           }
           continue;
         }
-        this._lastMasks = this._lastMasks || {}; this._lastMasks[it.id] = { area: a, mask: m, width: w, height: h }; // teşhis/test için
+        if (this.debug) { this._lastMasks = this._lastMasks || {}; this._lastMasks[it.id] = { area: a, mask: m, width: w, height: h, thr }; } // yalnız geliştirici/test
         if (sfxOnArt(it)) { this._maskOverrides[it.id] = { area: a, mask: m, width: w, height: h }; deferred.push(it.id); continue; }
         const p = { item: it, area: a, mask: { mask: m, width: w, height: h }, patch: cleanup.patchFromResult(r, 3, w, h, m), decision: { method: "torii", reason: "Torii görsel çeviri temizliği; orijinal yazının tamamı (çeviri kutusu dışına taşan kısımlar dahil) maskelendi." } };
         await this.writeCleanPatch(sess, t, g, p);
@@ -1137,7 +1193,8 @@ class Pipeline {
     for (const p of pages) {
       const sess = this.store.findByUid(p.docUid);
       const n = sess ? sess.state.items.filter((i) => this.filtersAllow(i)).length : "?";
-      const steps = op === "detect" ? [{ kind: "ocr" }] : op === "translate" ? [{ kind: "translate-texts" }] : op === "clean" ? [{ kind: "inpaint" }] : op === "full" ? [{ kind: "ocr" }, { kind: "translate-texts" }, { kind: "inpaint" }] : [];
+      const single = op === "full" && this.settings.ui.fullMode === "single";
+      const steps = op === "detect" ? [{ kind: "ocr" }] : op === "translate" ? [{ kind: "translate-texts" }] : op === "clean" ? [{ kind: "inpaint" }] : op === "full" ? (single ? [{ kind: "upload-image" }] : [{ kind: "ocr" }, { kind: "translate-texts" }, { kind: "inpaint" }]) : [];
       plan.push({ page: p, open: !!sess, n, est: estimateCredits(steps).min });
     }
     const total = plan.reduce((x, p) => x + p.est, 0);
@@ -1147,7 +1204,7 @@ class Pipeline {
     log("info", `Bölüm işlemi: ${pages.length} sayfa, tahmini en az ~${Math.round(total * 100) / 100} kredi${resetNote ? " (her sayfa baştan)" : ""}`, rows);
     this.hooks.notify(`Bölüm: ${pages.length} sayfa işleniyor (tahmini en az ~${Math.round(total * 100) / 100} kredi).`, "info");
     for (let k = 0; k < pages.length; k++) {
-      if (this.cancelRequested) break;
+      this.checkCancel();
       const p = pages[k];
       let sess = this.store.findByUid(p.docUid);
       if (!sess) { await this.hooks.openPage(p); sess = this.store.findByUid(p.docUid); }

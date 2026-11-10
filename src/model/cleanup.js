@@ -8,8 +8,7 @@ const METHODS = {
   torii: { label: "Torii Inpaint (varsayılan)", kind: "api", provider: "torii", cost: 0.02 },
   flat: { label: "Yerel düz dolgu (kredisiz)", kind: "local", provider: "local", cost: 0 },
   contentAware: { label: "Adobe İçerik Duyarlı Dolgu (yerel)", kind: "local", provider: "adobe-local", cost: 0 },
-  adobeRemove: { label: "Adobe Kaldır (Photoshop)", kind: "adobe", provider: "adobe", cost: null },
-  adobeGenerative: { label: "Adobe Üretken Dolgu (model seçilebilir)", kind: "adobe", provider: "adobe", cost: null },
+  adobeGenerative: { label: "Adobe Üretken Dolgu (Firefly)", kind: "adobe", provider: "adobe", cost: null },
   firefly: { label: "Firefly Services (sunucu)", kind: "server", provider: "adobe", cost: null },
 };
 
@@ -256,4 +255,56 @@ function colorTextMask(rgb, w, h, core, textHex, opts) {
   return geom.dilate(out, w, h, opts.strokeR || 4);
 }
 
-module.exports = { colorTextMask, METHODS, itemMask, itemArea, analyzeRegion, chooseMethod, flatFillPatch, patchFromResult, diffMask, qualityMetrics };
+
+/**
+ * Balon içindeki TÜM yazı parçaları (kopuk nokta, taşan satır, ünlem) — OCR poligonunun dışında kalsalar bile.
+ * Balon içi = zemin rengine benzeyen bölge (R). Balon çerçevesinin dışına bağlı olmayan, R olmayan pikseller = mürekkep.
+ * Kontura değen harf mürekkep sayılmaz (kontur korunur); onu OCR maskesi zaten kapsar.
+ * rgb: area görüntüsü; bubble.rect/bg belge koordinatı; box: yazı kutusu (tohum). → Uint8Array(w*h) 255 = mürekkep
+ */
+function bubbleInkMask(rgb, w, h, area, bubble, box) {
+  const out = new Uint8Array(w * h);
+  if (!bubble || !bubble.rect || !bubble.bg) return out;
+  const n = parseInt(bubble.bg.slice(1), 16), bg = [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+  const L = Math.max(0, Math.floor(bubble.rect.left - area.left) - 2), T = Math.max(0, Math.floor(bubble.rect.top - area.top) - 2);
+  const Rr = Math.min(w, Math.ceil(bubble.rect.right - area.left) + 2), B = Math.min(h, Math.ceil(bubble.rect.bottom - area.top) + 2);
+  if (Rr - L < 4 || B - T < 4) return out;
+  const near = (i) => Math.abs(rgb[i * 3] - bg[0]) + Math.abs(rgb[i * 3 + 1] - bg[1]) + Math.abs(rgb[i * 3 + 2] - bg[2]) < 48;
+  const reg = new Uint8Array(w * h), q = new Int32Array((Rr - L) * (B - T) + 4);
+  let qh = 0, qt = 0;
+  // R: yazı kutusundaki zemin renkli piksellerden taşma (balon konturu durdurur; kutu köşesi balon dışındaysa bile mürekkep sonucu değişmez)
+  const cx0 = Math.max(L, Math.round(box.cx - box.w * 0.5 - area.left)), cx1 = Math.min(Rr, Math.round(box.cx + box.w * 0.5 - area.left));
+  const cy0 = Math.max(T, Math.round(box.cy - box.h * 0.5 - area.top)), cy1 = Math.min(B, Math.round(box.cy + box.h * 0.5 - area.top));
+  for (let y = cy0; y < Math.max(cy1, cy0 + 1); y++) for (let x = cx0; x < Math.max(cx1, cx0 + 1); x++) { const i = y * w + x; if (y < B && x < Rr && !reg[i] && near(i)) { reg[i] = 1; q[qt++] = i; } }
+  while (qh < qt) {
+    const i = q[qh++], x = i % w, y = (i / w) | 0;
+    if (x > L && !reg[i - 1] && near(i - 1)) { reg[i - 1] = 1; q[qt++] = i - 1; }
+    if (x < Rr - 1 && !reg[i + 1] && near(i + 1)) { reg[i + 1] = 1; q[qt++] = i + 1; }
+    if (y > T && !reg[i - w] && near(i - w)) { reg[i - w] = 1; q[qt++] = i - w; }
+    if (y < B - 1 && !reg[i + w] && near(i + w)) { reg[i + w] = 1; q[qt++] = i + w; }
+  }
+  // O: çerçeve kenarından R olmayan piksellerle taşma (balon dışı + kontur + kontura bağlı çizimler)
+  const outside = new Uint8Array(w * h);
+  qh = 0; qt = 0;
+  const seed = (x, y) => { const i = y * w + x; if (!reg[i] && !outside[i]) { outside[i] = 1; q[qt++] = i; } };
+  for (let x = L; x < Rr; x++) { seed(x, T); seed(x, B - 1); }
+  for (let y = T; y < B; y++) { seed(L, y); seed(Rr - 1, y); }
+  while (qh < qt) {
+    const i = q[qh++], x = i % w, y = (i / w) | 0;
+    if (x > L && !reg[i - 1] && !outside[i - 1]) { outside[i - 1] = 1; q[qt++] = i - 1; }
+    if (x < Rr - 1 && !reg[i + 1] && !outside[i + 1]) { outside[i + 1] = 1; q[qt++] = i + 1; }
+    if (y > T && !reg[i - w] && !outside[i - w]) { outside[i - w] = 1; q[qt++] = i - w; }
+    if (y < B - 1 && !reg[i + w] && !outside[i + w]) { outside[i + w] = 1; q[qt++] = i + w; }
+  }
+  let cnt = 0, s1 = 0, s2 = 0;
+  for (let y = T; y < B; y++) for (let x = L; x < Rr; x++) {
+    const i = y * w + x;
+    if (!reg[i] && !outside[i]) out[i] = 255;
+    else if (reg[i]) { const v = 0.299 * rgb[i * 3] + 0.587 * rgb[i * 3 + 1] + 0.114 * rgb[i * 3 + 2]; cnt++; s1 += v; s2 += v * v; }
+  }
+  // Balon zemininin düzlüğü (parlaklık std): düşükse yerel düz dolgu yeterli
+  out.bgStd = cnt ? Math.sqrt(Math.max(0, s2 / cnt - (s1 / cnt) * (s1 / cnt))) : 99;
+  out.regionPx = cnt;
+  return out;
+}
+module.exports = { bubbleInkMask, colorTextMask, METHODS, itemMask, itemArea, analyzeRegion, chooseMethod, flatFillPatch, patchFromResult, diffMask, qualityMetrics };

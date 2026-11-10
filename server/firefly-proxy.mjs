@@ -64,7 +64,8 @@ async function generate({ prompt, width, height }) {
 }
 
 function send(res, code, obj) {
-  res.writeHead(code, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" });
+  // CORS başlığı YOK: tarayıcıdaki siteler bu vekili çağıramaz (UXP fetch CORS gerektirmez)
+  res.writeHead(code, { "Content-Type": "application/json" });
   res.end(JSON.stringify(obj));
 }
 
@@ -73,14 +74,15 @@ http.createServer(async (req, res) => {
     if (req.method === "GET" && req.url === "/health") {
       if (!CLIENT_ID || !CLIENT_SECRET) return send(res, 200, { ok: false, reason: "FIREFLY_CLIENT_ID / FIREFLY_CLIENT_SECRET tanımlı değil" });
       await getToken();
-      return send(res, 200, { ok: true, models: ["firefly-fill", "firefly-generate"] });
+      return send(res, 200, { ok: true, models: ["firefly-fill"] });
     }
     if (req.method !== "POST") return send(res, 404, { error: "bulunamadı" });
+    // Yalnız JSON: tarayıcıların ön kontrolsüz gönderebildiği text/plain / form istekleri reddedilir
+    if (!String(req.headers["content-type"] || "").toLowerCase().startsWith("application/json")) return send(res, 415, { error: "Content-Type application/json olmalı" });
     const chunks = [];
     for await (const c of req) chunks.push(c);
     const body = JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}");
     if (req.url === "/fill") return send(res, 200, await fill(body));
-    if (req.url === "/generate") return send(res, 200, await generate(body));
     return send(res, 404, { error: "bulunamadı" });
   } catch (e) {
     console.error(e.message); // gizli bilgi loglanmaz

@@ -128,6 +128,8 @@ function mergeDetections(existing, incoming) {
         best.textBounds = n.bounds;
       } else if (!best.locks.position && !best.boxEdited) { best.polygon = n.polygon; best.lines = n.lines; best.box = n.box; best.bounds = n.bounds; }
       best.ocr = Object.assign({}, best.ocr, n.ocr);
+      // Yeni tespitin balon bilgisi taşınır (onaylı SFX/balon dışı öğelerde balon kullanılmaz)
+      if ("bubble" in n) best.bubble = best.typeConfirmed && (best.type === "sfx" || best.type === "offbubble") ? null : n.bubble || null;
       best.confidence = n.confidence; best.direction = n.direction; best.sourceLang = n.sourceLang || best.sourceLang;
       if (n.translation && !best.locks.text && !best.translationEdited) best.translation = n.translation;
       updated.push(best);
@@ -163,7 +165,9 @@ function refineTypeByStats(it, st, medianFont) {
   if (it.bubble) {
     // Kapalı balonun içindeki yazı: balon rengine göre diyalog / anlatım (SFX değil)
     const n = parseInt(String(it.bubble.bg || "#ffffff").slice(1), 16), lum = 0.299 * ((n >> 16) & 255) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255);
-    type = "dialog"; reasons.push("kapalı balon içinde" + (lum < 90 ? " (koyu balon)" : ""));
+    // Dikdörtgen kutu → anlatım; oval/dikenli balon → diyalog
+    if (it.bubble.rectangular) { type = "narration"; reasons.push("kapalı dikdörtgen kutu" + (lum < 90 ? " (koyu)" : "")); }
+    else { type = "dialog"; reasons.push("kapalı balon içinde" + (lum < 90 ? " (koyu balon)" : "")); }
   } else if (sfxLike) { type = "sfx"; reasons.push("kısa yansıma sözcüğü" + (ratio >= 1.5 ? ", büyük yazı" : "") + (tilted ? ", eğik" : "") + (areaPerChar > 4 ? ", geniş alana yayılmış" : "")); }
   else if (st.light >= 0.62 && st.uniform >= 0.6) { type = "dialog"; reasons.push(`açık düz zemin %${Math.round(st.light * 100)}`); }
   else if (st.uniform >= 0.75) {
@@ -201,10 +205,12 @@ function ringStats(rgb, w, h, inside, ringPx, includeInside) {
  * img: {data(RGB), width, height, bounds:{left,top}} — belge koordinatlı görüntü (temizlenmiş olması tercih edilir)
  * → { rect:{left,top,right,bottom}, cx, cy, w, h, bg } (belge pikseli)
  */
-function detectBubble(img, it) {
+function detectBubble(img, it, page) {
   const b = it.box || {};
   if (!b.w || !b.h) return null;
   const W = img.width, H = img.height, ox = img.bounds.left || 0, oy = img.bounds.top || 0;
+  // Belge boyutu: kırpılmış görüntünün kenarı SAYFA kenarı değildir (bölge tespiti / yeniden öneri)
+  const PW = (page && page.W) || ox + W, PH = (page && page.H) || oy + H;
   const reach = Math.max(b.w, b.h) * 1.6 + 40;
   const win = {
     left: Math.max(0, Math.floor(b.cx - b.w / 2 - reach - ox)), top: Math.max(0, Math.floor(b.cy - b.h / 2 - reach - oy)),
@@ -221,27 +227,52 @@ function detectBubble(img, it) {
   if (!samp[0].length) return null;
   const bg = samp.map((a) => a.sort((p, q) => p - q)[a.length >> 1]);
   const near = (x, y) => { const c = px(x, y); return Math.abs(c[0] - bg[0]) + Math.abs(c[1] - bg[1]) + Math.abs(c[2] - bg[2]) < 48; };
-  const seen = new Uint8Array(ww * wh), q = new Int32Array(ww * wh);
-  let qh = 0, qt = 0;
-  for (let y = by0; y < by1; y++) for (let x = bx0; x < bx1; x++) { const i = y * ww + x; if (!seen[i] && near(x, y)) { seen[i] = 1; q[qt++] = i; } }
-  if (!qt) return null;
-  let l = ww, t = wh, r = -1, bt = -1, touched = false, n = 0;
-  while (qh < qt) {
-    const i = q[qh++], x = i % ww, y = (i / ww) | 0;
-    n++;
-    if (x < l) l = x; if (x > r) r = x; if (y < t) t = y; if (y > bt) bt = y;
-    // Arama penceresinin İÇ kenarına taşma = kapalı balon yok. Sayfa kenarına değmek serbest (sayfadan taşan balonlar).
-    if ((x === 0 && win.left > 0) || (y === 0 && win.top > 0) || (x === ww - 1 && win.right < W) || (y === wh - 1 && win.bottom < H)) { touched = true; break; }
-    if (x === 0 || y === 0 || x === ww - 1 || y === wh - 1) continue;
-    const nb = [i - 1, i + 1, i - ww, i + ww];
-    for (let k = 0; k < 4; k++) { const j = nb[k]; if (!seen[j]) { const jx = j % ww, jy = (j / ww) | 0; if (near(jx, jy)) { seen[j] = 1; q[qt++] = j; } } }
-  }
-  if (touched) return null;
-  const rect = { left: l + win.left + ox, top: t + win.top + oy, right: r + 1 + win.left + ox, bottom: bt + 1 + win.top + oy };
-  const rw = rect.right - rect.left, rh = rect.bottom - rect.top;
-  // Makullük: balon, yazı kutusundan küçük olamaz; çok dolu değilse (ince şerit vb.) reddet
-  if (rw < b.w * 0.8 || rh < b.h * 0.8 || n < rw * rh * 0.35) return null;
-  return { rect, cx: (rect.left + rect.right) / 2, cy: (rect.top + rect.bottom) / 2, w: rw, h: rh, bg: "#" + bg.map((v) => v.toString(16).padStart(2, "0")).join("") };
+  // Pencere kenarı sayfa kenarı mı? (belge koordinatı)
+  const atL = ox + win.left <= 0, atT = oy + win.top <= 0, atR = ox + win.right >= PW, atB = oy + win.bottom >= PH;
+  const flood = (shrink) => {
+    const seen = new Uint8Array(ww * wh), q = new Int32Array(ww * wh);
+    let qh = 0, qt = 0;
+    // Tohumlar: kutudaki zemin renkli pikseller (shrink > 0 → yalnız kutunun ortası; oval balonda köşe dışarıda kalabilir)
+    const sx0 = Math.round(bx0 + (bx1 - bx0) * shrink), sx1 = Math.round(bx1 - (bx1 - bx0) * shrink);
+    const sy0 = Math.round(by0 + (by1 - by0) * shrink), sy1 = Math.round(by1 - (by1 - by0) * shrink);
+    for (let y = sy0; y < Math.max(sy1, sy0 + 1) && y < wh; y++) for (let x = sx0; x < Math.max(sx1, sx0 + 1) && x < ww; x++) { const i = y * ww + x; if (!seen[i] && near(x, y)) { seen[i] = 1; q[qt++] = i; } }
+    if (!qt) return null;
+    const rowMin = new Int32Array(wh).fill(ww), rowMax = new Int32Array(wh).fill(-1);
+    let l = ww, t = wh, r = -1, bt = -1, n = 0;
+    let pL = false, pR = false, pT = false, pB = false;
+    while (qh < qt) {
+      const i = q[qh++], x = i % ww, y = (i / ww) | 0;
+      n++;
+      if (x < l) l = x; if (x > r) r = x; if (y < t) t = y; if (y > bt) bt = y;
+      if (x < rowMin[y]) rowMin[y] = x; if (x > rowMax[y]) rowMax[y] = x;
+      // Arama penceresinin İÇ kenarına taşma = kapalı balon yok. Sayfa kenarına değmek serbest (sayfadan taşan balonlar).
+      if ((x === 0 && !atL) || (y === 0 && !atT) || (x === ww - 1 && !atR) || (y === wh - 1 && !atB)) return null;
+      if (x === 0) pL = true; if (x === ww - 1) pR = true; if (y === 0) pT = true; if (y === wh - 1) pB = true;
+      if (x === 0 || y === 0 || x === ww - 1 || y === wh - 1) continue;
+      const nb = [i - 1, i + 1, i - ww, i + ww];
+      for (let k = 0; k < 4; k++) { const j = nb[k]; if (!seen[j]) { const jx = j % ww, jy = (j / ww) | 0; if (near(jx, jy)) { seen[j] = 1; q[qt++] = j; } } }
+    }
+    // Karşılıklı İKİ sayfa kenarına değen bölge balon değil, paneller arası boşluktur (balon yalnızca bir kenardan kesilir)
+    if ((pL && pR) || (pT && pB)) return null;
+    const rect = { left: l + win.left + ox, top: t + win.top + oy, right: r + 1 + win.left + ox, bottom: bt + 1 + win.top + oy };
+    const rw = rect.right - rect.left, rh = rect.bottom - rect.top;
+    // Makullük: balon, yazı kutusundan küçük olamaz; çok dolu değilse (ince şerit vb.) reddet
+    if (rw < b.w * 0.8 || rh < b.h * 0.8 || n < rw * rh * 0.35) return null;
+    // Bölge yazıyı ÇEVRELEMELİ: düz renkli SFX harfinin içi kendi "balonu" sayılmasın (en az bir boyutta kutudan büyük olmalı)
+    if (rw <= b.w * 1.02 && rh <= b.h * 1.02) return null;
+    // Şekil: satır aralıklarının (yazı boşlukları dahil) dikdörtgene oranı — dikdörtgen kutu ~1, oval ~0.78
+    let span = 0;
+    for (let y = t; y <= bt; y++) if (rowMax[y] >= rowMin[y]) span += rowMax[y] - rowMin[y] + 1;
+    const fill = span / (rw * rh);
+    return {
+      rect, cx: (rect.left + rect.right) / 2, cy: (rect.top + rect.bottom) / 2, w: rw, h: rh,
+      bg: "#" + bg.map((v) => v.toString(16).padStart(2, "0")).join(""),
+      fill: Math.round(fill * 100) / 100, rectangular: fill > 0.93, // dikdörtgen kutu → anlatım; oval/dikenli balon → diyalog
+    };
+  };
+  // Önce tüm kutudan; sızarsa (oval balonda kutu köşesi dışarıda) yalnız ortadan
+  return flood(0) || flood(0.25);
 }
+
 
 module.exports = { suggestType, suggestTone, itemsFromOcr, itemsFromUpload, mergeDetections, bgrToHex, median, refineTypeByStats, ringStats, detectBubble };

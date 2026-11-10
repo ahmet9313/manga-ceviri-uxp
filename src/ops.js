@@ -120,7 +120,7 @@ class Ops {
     const it = this.store.item(itemId, docId);
     it[field] = value;
     if (field === "source") it.sourceEdited = true;
-    if (field === "type") it.typeConfirmed = true;
+    if (field === "type") { it.typeConfirmed = true; if (value === "sfx" || value === "offbubble") it.bubble = null; }
     if (field === "tone") it.toneEdited = true;
     this.store.touch(docId);
   }

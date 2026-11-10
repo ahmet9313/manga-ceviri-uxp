@@ -33,12 +33,6 @@ class FireflyClient {
     log("info", "Firefly dolgu tamam");
     return { mime: j.mime, bytes: base64Decode(j.data) };
   }
-
-  /** Görsel üretimi. → {mime, bytes} */
-  async generate(prompt, width, height) {
-    const j = await this._post("/generate", { prompt, width, height });
-    return { mime: j.mime, bytes: base64Decode(j.data) };
-  }
 }
 
 module.exports = { FireflyClient };

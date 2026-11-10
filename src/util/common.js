@@ -31,6 +31,7 @@ const SECRET_PATTERNS = [
   /("?(?:x-byok-[a-z]+|authorization|api[_-]?key|apiKey|token|client_secret)"?\s*[:=]\s*"?)([^",\s}]+)/gi,
   /AIza[0-9A-Za-z_\-]{20,}/g,
   /sk-[A-Za-z0-9_\-]{16,}/g,
+  /xai-[A-Za-z0-9_\-]{16,}/g,
 ];
 
 function redact(input) {
@@ -40,6 +41,7 @@ function redact(input) {
   s = s.replace(SECRET_PATTERNS[2], "$1****");
   s = s.replace(SECRET_PATTERNS[3], "AIza****");
   s = s.replace(SECRET_PATTERNS[4], "sk-****");
+  s = s.replace(SECRET_PATTERNS[5], "xai-****");
   return s;
 }
 

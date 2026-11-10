@@ -21,7 +21,6 @@ const TRANSLATORS = [
   { id: "claude-opus-5.5", label: "Claude Opus 5.5", family: "anthropic" },
 ];
 const BYOK_PROVIDERS = ["google", "openai", "openrouter", "anthropic", "deepseek", "xai"];
-const TORII_FONTS = ["wildwords", "noto", "badcomic", "mashanzheng", "komika", "bangers", "edo", "ridi", "bushidoo", "hayah", "itim", "mogul", "heroika", "shonen"];
 
 class ToriiError extends Error {
   constructor(message, status, body) { super(message); this.name = "ToriiError"; this.status = status; this.body = body; }
@@ -60,7 +59,7 @@ class ToriiClient {
   /** getKey: async () => string ; options: { minIntervalMs, fetchImpl } */
   constructor(getKey, options) {
     this.getKey = getKey;
-    this.minIntervalMs = (options && options.minIntervalMs) || 1050;
+    this.minIntervalMs = options && options.minIntervalMs != null ? options.minIntervalMs : 1050;
     this.fetch = (options && options.fetchImpl) || ((...a) => fetch(...a));
     this._chain = Promise.resolve();
     this._lastStart = 0;
@@ -83,29 +82,31 @@ class ToriiClient {
 
   async _request(method, path, { body, contentType, headers, paid, timeoutMs, label }) {
     const key = await this.getKey();
-    if (!key) throw new ToriiError("Torii API anahtarı tanımlı değil. Ayarlar sekmesinden ekleyin.", 401);
+    if (!key) throw new ToriiError("Torii API anahtarı tanımlı değil → Ayarlar › Torii API'ye anahtarınızı girin.", 401);
     const url = BASE_URL + path;
+    const name = label || path;
     let attempt = 0;
     for (;;) {
       attempt++;
       const started = Date.now();
-      let res;
-      if (this.onWait) this.onWait(label || path);
+      let res, text;
+      if (this.onWait) this.onWait(name);
       try {
-        res = await this._schedule(() => this._fetchWithTimeout(url, {
+        // Yanıt GÖVDESİ de zaman sınırının içinde okunur (başlık gelip gövde takılırsa da zaman aşımı olur)
+        ({ res, text } = await this._schedule(() => this._fetchWithTimeout(url, {
           method,
           headers: Object.assign({ Authorization: "Bearer " + key }, contentType ? { "Content-Type": contentType } : {}, headers || {}),
           body: body ? body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength) : undefined,
-        }, timeoutMs || 120000));
+        }, timeoutMs || 120000)));
       } catch (e) {
-        log("warn", `${label || path}: ağ hatası/zaman aşımı`, { attempt, error: String(e && e.message) });
+        log("warn", `${name}: ağ hatası/zaman aşımı`, { attempt, error: String(e && e.message) });
         if (paid) {
           throw new AmbiguousRequestError(
             "İstek zaman aşımına uğradı veya bağlantı koptu. Sunucunun isteği işleyip işlemediği bilinmiyor; kredi düşmüş olabilir.",
             { path, label, elapsedMs: Date.now() - started, creditsBefore: this.lastCredits });
         }
         if (attempt < 3) { await sleep(1000 * attempt); continue; }
-        throw new ToriiError("Torii'ye bağlanılamadı: " + (e && e.message), 0);
+        throw new ToriiError("Torii'ye bağlanılamadı. İnternet bağlantınızı kontrol edip tekrar deneyin.", 0);
       }
       const creditsHdr = res.headers.get("credits");
       if (creditsHdr != null && creditsHdr !== "") {
@@ -113,23 +114,30 @@ class ToriiClient {
         if (!isNaN(c)) { this.lastCredits = c; if (this.onCredits) this.onCredits(c); }
       }
       if (res.status === 429 || res.status === 503) {
+        // Reddedilen istek ücretlendirilmez → bekleyip tekrar (Retry-After varsa ona uyulur)
+        const ra = Number(res.headers.get("retry-after"));
         if (attempt <= 5) {
-          const backoff = Math.min(30000, 1000 * Math.pow(2, attempt - 1)) + Math.random() * 400;
-          log("warn", `${label || path}: hız sınırı (${res.status}), ${Math.round(backoff)} ms sonra tekrar`);
+          const backoff = ra > 0 ? Math.min(60000, ra * 1000) : Math.min(30000, 1000 * Math.pow(2, attempt - 1)) + Math.random() * 400;
+          log("warn", `${name}: hız sınırı (${res.status}), ${Math.round(backoff)} ms sonra tekrar`);
+          if (this.onWait) this.onWait(`${name} — hız sınırı, ${Math.round(backoff / 1000)} sn bekleniyor`);
           await sleep(backoff);
           continue;
         }
-        throw new ToriiError("Torii hız sınırı aşıldı, daha sonra deneyin.", res.status);
+        throw new ToriiError("Torii şu an yoğun (hız sınırı). Bir dakika sonra tekrar deneyin.", res.status);
       }
-      const text = await res.text();
+      // Ağ geçidi hataları (502/504/52x): asıl sunucu işi bitirip ücretlendirmiş olabilir → ücretli istekte belirsiz say
+      if (paid && (res.status === 502 || res.status === 504 || (res.status >= 520 && res.status <= 524))) {
+        log("warn", `${name}: ağ geçidi hatası ${res.status}`);
+        throw new AmbiguousRequestError(`Torii ağ geçidi hatası (${res.status}). İstek sunucuda işlenmiş olabilir; kredi düşmüş olabilir.`, { path, label, elapsedMs: Date.now() - started, creditsBefore: this.lastCredits });
+      }
       const successHdr = res.headers.get("success");
       if (!res.ok || successHdr === "false") {
-        log("error", `${label || path}: HTTP ${res.status}`, text.slice(0, 500));
-        throw new ToriiError(this._errorMessage(res.status, text), res.status, redact(text.slice(0, 2000)));
+        log("error", `${name}: HTTP ${res.status}`, redact(String(text).slice(0, 500)));
+        throw new ToriiError(this._errorMessage(res.status, text), res.status, redact(String(text).slice(0, 2000)));
       }
       let json;
-      try { json = JSON.parse(text); } catch (e) { throw new ToriiError("Torii yanıtı JSON değil: " + text.slice(0, 200), res.status); }
-      log("info", `${label || path}: tamam (${Date.now() - started} ms)`, json && json.metadata ? { credits_used: json.metadata.credits_used } : undefined);
+      try { json = JSON.parse(text); } catch (e) { throw new ToriiError(`${name}: Torii beklenmeyen yanıt verdi (JSON değil). Biraz sonra tekrar deneyin.`, res.status); }
+      log("info", `${name}: tamam (${Date.now() - started} ms)`, json && json.metadata ? { credits_used: json.metadata.credits_used } : undefined);
       return json;
     }
   }
@@ -137,11 +145,14 @@ class ToriiClient {
   _errorMessage(status, text) {
     let msg = text;
     try { const j = JSON.parse(text); msg = j.error || j.message || j.detail || text; } catch (e) { /* düz metin */ }
-    msg = redact(String(msg)).slice(0, 400);
-    if (status === 401 || status === 403) return "Torii anahtarı reddedildi (" + status + "): " + msg;
-    if (status === 402) return "Yetersiz kredi: " + msg;
-    if (status === 413) return "Görsel çok büyük: " + msg;
-    return `Torii hatası (${status}): ${msg}`;
+    msg = redact(String(msg)).replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim().slice(0, 160); // HTML ve uzun metin atılır
+    const tail = msg ? ` (Torii: ${msg})` : "";
+    if (status === 401 || status === 403) return `Torii anahtarı reddedildi → Ayarlar › Torii API'de anahtarı kontrol edin; kısaltılmış (…) anahtar çalışmaz.${tail}`;
+    if (status === 402) return `Torii krediniz yetersiz → toriitranslate.com'dan kredi yükleyin.${tail}`;
+    if (status === 413) return `Görsel Torii için çok büyük (sınır 50 MB / 100 MP) → sayfayı bölerek veya Bölge kapsamıyla deneyin.${tail}`;
+    if (status === 400 || status === 422) return `Torii isteği kabul etmedi (${status}) — ayarları (dil, model) kontrol edin.${tail}`;
+    if (status >= 500) return `Torii sunucu hatası (${status}) — biraz sonra tekrar deneyin.${tail}`;
+    return `Torii hatası (${status}).${tail}`;
   }
 
   async _fetchWithTimeout(url, init, ms) {
@@ -149,7 +160,9 @@ class ToriiClient {
     const ctrl = typeof AbortController === "function" ? new AbortController() : null;
     if (ctrl) init.signal = ctrl.signal;
     const timeout = new Promise((_, rej) => { timer = setTimeout(() => { if (ctrl) ctrl.abort(); rej(new Error("zaman aşımı (" + ms / 1000 + " sn)")); }, ms); });
-    try { return await Promise.race([this.fetch(url, init), timeout]); } finally { clearTimeout(timer); }
+    try {
+      return await Promise.race([(async () => { const res = await this.fetch(url, init); const text = await res.text(); return { res, text }; })(), timeout]);
+    } finally { clearTimeout(timer); }
   }
 
   // ---------------- Ücretsiz uç noktalar ----------------
@@ -211,11 +224,7 @@ class ToriiClient {
     const add = (n, v) => { if (v !== undefined && v !== null && v !== "") f.push({ name: n, value: v }); };
     add("translator", o.translator);
     add("reasoning_effort", o.reasoning_effort);
-    add("font", o.font);
-    add("text_align", o.text_align);
     if (o.min_font_size) add("min_font_size", Math.max(6, Math.min(100, Math.round(o.min_font_size))));
-    if (o.stroke_disabled != null) add("stroke_disabled", o.stroke_disabled ? "true" : "false");
-    if (o.bubbles_only != null) add("bubbles_only", o.bubbles_only ? "true" : "false");
     if (o.source_langs_whitelist && o.source_langs_whitelist.length) add("source_langs_whitelist", JSON.stringify(o.source_langs_whitelist));
     if (o.custom_prompt) add("custom_prompt", String(o.custom_prompt).slice(0, 1000));
     if (o.context) add("context", String(o.context).slice(-10000));
@@ -238,7 +247,7 @@ function estimateCredits(plan) {
   let min = 0;
   const notes = [];
   for (const p of plan) {
-    if (p.kind === "upload-image") { min += 1; notes.push("Görsel çeviri ≥1"); }
+    if (p.kind === "upload-image") { min += 6; notes.push("Görsel çeviri: ölçülen 6–8,4 kr / 800×10000 sayfa"); }
     if (p.kind === "ocr") { min += 1; }
     if (p.kind === "translate-texts") { min += p.byok ? 0.1 : 1; }
     if (p.kind === "inpaint") { min += 0.02; }
@@ -246,4 +255,4 @@ function estimateCredits(plan) {
   return { min: Math.round(min * 100) / 100, approx: true, notes };
 }
 
-module.exports = { ToriiClient, ToriiError, AmbiguousRequestError, TRANSLATORS, BYOK_PROVIDERS, TORII_FONTS, LIMITS, estimateCredits, makeMultipart, BASE_URL };
+module.exports = { ToriiClient, ToriiError, AmbiguousRequestError, TRANSLATORS, BYOK_PROVIDERS, LIMITS, estimateCredits, makeMultipart, BASE_URL };

@@ -16,7 +16,10 @@ const ptToPx = (pt, res) => (pt * res) / 72;
  */
 function trUpper(s, source) {
   const keep = new Set(String(source || "").toLowerCase().match(/[a-z]+/g) || []);
-  return String(s).replace(/[A-Za-zÀ-ÿĞğİıŞşÇçÖöÜü]+/g, (w) => keep.has(w.toLowerCase()) ? w.toUpperCase() : w.replace(/i/g, "İ").replace(/ı/g, "I").toUpperCase());
+  // Yalnızca çeviride BÜYÜK harfle başlayan (özel ad) ve kaynakta aynen geçen kelimeler korunur;
+  // "in", "bin" gibi Türkçe kelimeler İngilizce kaynakta geçse bile Türkçe kurala girer.
+  const isName = (w) => /^[A-Z][a-z]+$/.test(w) && keep.has(w.toLowerCase());
+  return String(s).replace(/[^\s0-9.,!?…;:'"“”‘’«»()[\]{}\-–—/\\*~]+/g, (w) => isName(w) ? w.toUpperCase() : w.replace(/i/g, "İ").replace(/ı/g, "I").toUpperCase());
 }
 function toPsText(s) { return String(s == null ? "" : s).replace(/\r\n|\n/g, "\r"); }
 function fromPsText(s) { return String(s == null ? "" : s).replace(/\r/g, "\n"); }
@@ -224,7 +227,25 @@ async function fitToBox(docId, layerId, box, opts) {
   await ensureParagraph(docId, layerId);
   // Ölçüm için kutuyu yüksek yap (taşan satırlar gizlenmesin)
   await resizeBox(docId, layerId, innerW, Math.max(innerH * 6, 400));
+  // Ölçüm: seç + punto (ve satır aralığı) + sınır okuma TEK batchPlay çağrısında (3 gidiş-dönüş yerine 1)
   const measure = async (px) => {
+    const op = { size: { _unit: "pointsUnit", _value: pxToPt(px, res) } };
+    if (opts.leadingPct != null) {
+      if (opts.leadingPct > 0) { op.autoLeading = false; op.leading = { _unit: "pointsUnit", _value: pxToPt(px * opts.leadingPct / 100, res) }; }
+      else op.autoLeading = true;
+    }
+    try {
+      const r = await bp([
+        { _obj: "select", _target: [{ _ref: "layer", _id: layerId }], makeVisible: false },
+        { _obj: "set", _target: [{ _ref: "property", _property: "textStyle" }, { _ref: "textLayer", _enum: "ordinal", _value: "targetEnum" }], to: Object.assign({ _obj: "textStyle", textOverrideFeatureName: 808465458, typeStyleOperationType: 3 }, op) },
+        { _obj: "get", _target: [{ _property: "boundsNoEffects" }, { _ref: "layer", _id: layerId }] },
+      ]);
+      const bb = r[2] && r[2].boundsNoEffects;
+      if (bb && bb.bottom && bb.top) {
+        const v = (x) => (x && typeof x === "object" ? x._value : x);
+        return { h: v(bb.bottom) - v(bb.top), w: v(bb.right) - v(bb.left) };
+      }
+    } catch (e) { /* aşağıdaki yavaş yola düş */ }
     await applyStyle(docId, layerId, { sizePx: px, leadingPct: opts.leadingPct });
     const b = findLayer(doc, layerId).boundsNoEffects;
     return { h: b.bottom - b.top, w: b.right - b.left };
@@ -238,30 +259,36 @@ async function fitToBox(docId, layerId, box, opts) {
     const PROBE = 100;
     let perPx = 0;
     await resizeBox(docId, layerId, Math.max(innerW * 30, 4000), Math.max(innerH * 6, 400));
-    for (const wd of words) {
-      layer.textItem.contents = wd;
-      await applyStyle(docId, layerId, { sizePx: PROBE });
-      const b = findLayer(doc, layerId).boundsNoEffects;
-      perPx = Math.max(perPx, (b.right - b.left) / PROBE);
+    try {
+      for (const wd of words) {
+        layer.textItem.contents = wd;
+        const pm = await measure(PROBE); // tek çağrı: punto + sınır
+        perPx = Math.max(perPx, pm.w / PROBE);
+      }
+    } finally {
+      layer.textItem.contents = toPsText(cur.contents); // ölçüm hata verse de asıl metin geri yazılır
     }
-    layer.textItem.contents = toPsText(cur.contents);
     await resizeBox(docId, layerId, innerW, Math.max(innerH * 6, 400));
     if (perPx > 0) {
       const wordMax = Math.floor((innerW * 0.97) / perPx);
       if (wordMax < hi) { hi = Math.max(lo, wordMax); wordLimited = true; }
     }
   }
-  let m = await measure(hi);
-  if (m.h <= innerH) best = hi;
+  // Arama: yazı yüksekliği ≈ punto² ile büyür → karekökle tahmin (ikiye bölmeden çok daha az Photoshop ölçümü)
+  let m = await measure(hi), lastPx = hi;
+  if (m.h <= innerH && m.w <= innerW * 1.02) best = hi;
   else {
-    for (let i = 0; i < 8 && hi - lo > 0.5; i++) {
-      const mid = (lo + hi) / 2;
-      m = await measure(mid);
-      if (m.h <= innerH && m.w <= innerW * 1.02) { best = mid; lo = mid; } else hi = mid;
+    let hHi = m.h;
+    for (let i = 0; i < 6 && hi - lo > 1; i++) {
+      let guess = hi * Math.sqrt(innerH / Math.max(1, hHi)) * 0.98;
+      if (!(guess > lo + 0.25 && guess < hi - 0.25)) guess = (lo + hi) / 2;
+      m = await measure(guess); lastPx = guess;
+      if (m.h <= innerH && m.w <= innerW * 1.02) { best = guess; lo = guess; } else { hi = guess; hHi = m.h; }
     }
   }
-  best = Math.floor(best * 2) / 2;
-  m = await measure(best);
+  const fin = Math.floor(best * 2) / 2;
+  if (fin !== lastPx || !(m.h <= innerH)) m = await measure(fin);
+  best = fin;
   const overflow = m.h > innerH * 1.03;
   // Son kutu: metni rahat kapsayacak yükseklik
   await resizeBox(docId, layerId, innerW, Math.max(innerH, m.h + best * 1.2));

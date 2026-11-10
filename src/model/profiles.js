@@ -43,11 +43,11 @@ function defaultSettings() {
     // Genel taban boş: değerler "Varsayılan" düzeyinden gelir, böylece türe göre görünüm (SFX, orijinal renk) devreye girebilir
     global: { base: {}, rules: [] },
     chapters: [],
-    ui: { scope: "page", filters: { dialog: true, narration: true, offbubble: true, sfx: true }, bubblesOnly: false, fullMode: "auto" },
-    torii: { translator: "gemini-3.1-flash-lite", reasoning: "none", byokProvider: "", byokFallback: true, minFontPx: 10 },
+    ui: { scope: "page", filters: { dialog: true, narration: true, offbubble: true, sfx: true }, bubblesOnly: false, fullMode: "modular", tab: "items", open: {} },
+    torii: { translator: "gemini-3.1-flash-lite", reasoning: "none", byokProvider: "", byokFallback: true },
     cleanup: { preview: false, verified: {} },
     firefly: { proxyUrl: "" },
-    adobe: { model: "firefly", modelLabel: "Adobe Firefly (Üretken dolgu)", prompt: "", templates: [] },
+    adobe: { prompt: "" }, // Üretken Dolgu istemi (boş = yazıyı sil, zemini tamamla)
   };
 }
 
@@ -58,8 +58,10 @@ function buildCustomPrompt(profile, chapter, extra) {
   if (chapter && chapter.instruction) parts.push(chapter.instruction.trim());
   if (profile.honorifics) parts.push("Hitap biçimi: " + profile.honorifics.trim());
   if (extra) parts.push(extra.trim());
-  parts.push("Türkçe imla kurallarına uy; ÇĞİÖŞÜ çğıöşü harflerini doğru kullan.");
-  parts.push("Ses efektlerini (SFX) anlamıyla değil, kısa Türkçe yansıma sözcükle çevir (ör. SNAP → ÇAT!, BANG → BAM!, THUD → GÜM!, HUH? → HA?). Kişi ve yer adlarını değiştirme.");
+  const tr = !profile.targetLang || profile.targetLang === "tr";
+  if (tr) parts.push("Türkçe imla kurallarına uy; ÇĞİÖŞÜ çğıöşü harflerini doğru kullan.");
+  parts.push(tr ? "Ses efektlerini (SFX) anlamıyla değil, kısa Türkçe yansıma sözcükle çevir (ör. SNAP → ÇAT!, BANG → BAM!, THUD → GÜM!, HUH? → HA?). Kişi ve yer adlarını değiştirme."
+    : "Translate sound effects (SFX) as short onomatopoeia of the target language, not literally. Keep person and place names.");
   let s = parts.join("\n");
   if (s.length > 1000) s = s.slice(0, 997) + "…";
   return s;
