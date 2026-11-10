@@ -12,7 +12,7 @@ const { Pipeline } = R("../src/pipeline");
 const { uid } = R("../src/util/common");
 
 api.modal("SFX temizlik testi", async () => {
-  for (const d of app.documents.slice()) if (String(d.title).indexOf("turning-into-a-tentacle-monster-p1") === 0 || String(d.title).indexOf("MCS_") === 0) await d.closeWithoutSaving();
+  for (const d of app.documents.slice()) if (String(d.title).indexOf("MCS_") === 0) await d.closeWithoutSaving();
   await app.open(await lfs.getEntryWithUrl("file:" + ASSET_PATH));
   const doc = app.activeDocument, W = doc.width, H = doc.height;
   const store = new Store(); store.settings = profiles.defaultSettings(); store.settings.fontChecks = {}; store.settings.cleanup.preview = false;
@@ -67,6 +67,8 @@ api.modal("SFX temizlik testi", async () => {
   const crop = (src) => { const o = new Uint8Array(cw * ch * 3); for (let y = 0; y < ch; y++) o.set(src.subarray(((cy0 + y) * W + cx0) * 3, ((cy0 + y) * W + cx0 + cw) * 3), y * cw * 3); return o; };
   fs.writeFileSync(RESULT_PATH.replace(/\.json$/, "_before.png"), png.encodePng(crop(orig.data), cw, ch, 3));
   fs.writeFileSync(RESULT_PATH.replace(/\.json$/, "_after.png"), png.encodePng(crop(after.data), cw, ch, 3));
+  // Temiz bırak: testin açtığı belgeleri (yalnızca MCS_ ile başlayanlar) kaydetmeden kapat
+  for (const d of app.documents.slice()) if (String(d.title).indexOf("MCS_") === 0) await d.closeWithoutSaving();
   out.finished = true;
   out.summary = { pass: out.results.filter((r) => r.status === "PASS").length, fail: out.results.filter((r) => r.status === "FAIL").length };
   save();

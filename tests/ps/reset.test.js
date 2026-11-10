@@ -18,7 +18,7 @@ const rect = (l, t, r, b) => [[l, t], [r, t], [r, b], [l, b]];
 const mk = (src, tr, r) => { const p = rect(...r); return { id: uid("i_"), source: src, translation: tr, type: "dialog", typeConfirmed: true, tone: "normal", direction: "left_to_right", polygon: p, lines: [p], box: geom.polygonToBox(p), bounds: geom.polygonBounds(p), ocr: { fontsize: 28, textColor: "#000000" }, locks: { text: false, style: false, position: false }, manual: {}, status: { detected: true, translated: true, cleaned: false, typeset: false } }; };
 
 api.modal("Silme testi", async () => {
-  for (const d of app.documents.slice()) if (String(d.title).indexOf("turning-into-a-tentacle-monster-p1") === 0 || String(d.title).indexOf("MCS_") === 0) await d.closeWithoutSaving();
+  for (const d of app.documents.slice()) if (String(d.title).indexOf("MCS_") === 0) await d.closeWithoutSaving();
   await app.open(await lfs.getEntryWithUrl("file:" + ASSET_PATH));
   const doc = app.activeDocument;
   const store = new Store(); store.settings = profiles.defaultSettings(); store.settings.fontChecks = {};
@@ -73,6 +73,8 @@ api.modal("Silme testi", async () => {
   let diff = 0; for (let i = 0; i < origBefore.data.length; i++) if (origBefore.data[i] !== origAfter.data[i]) diff++;
   t_("Orijinal görsel katmanı başlangıçla birebir aynı", diff === 0, { diff });
   t_("Yalnız listeden kaldırılan öğenin katmanları bilerek yerinde", aLayers.every((id) => all().includes(id)));
+  // Temiz bırak: testin açtığı belgeleri (yalnızca MCS_ ile başlayanlar) kaydetmeden kapat
+  for (const d of app.documents.slice()) if (String(d.title).indexOf("MCS_") === 0) await d.closeWithoutSaving();
   out.finished = true;
   out.summary = { pass: out.results.filter((r) => r.status === "PASS").length, fail: out.results.filter((r) => r.status === "FAIL").length };
   save();

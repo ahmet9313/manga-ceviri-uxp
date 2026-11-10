@@ -58,7 +58,7 @@ function pickFont(cands) {
 
 async function openTestPage() {
   await api.modal("test aç", async () => {
-    for (const d of app.documents.slice()) if (String(d.title).indexOf("turning-into-a-tentacle-monster-p1") === 0 || String(d.title).indexOf("MCS_") === 0) await d.closeWithoutSaving();
+    for (const d of app.documents.slice()) if (String(d.title).indexOf("MCS_") === 0) await d.closeWithoutSaving();
     const e = await lfs.getEntryWithUrl("file:" + ASSET_PATH);
     await app.open(e);
   });
@@ -450,6 +450,8 @@ api.modal("Kabul testleri", async () => {
     return s;
   });
 
+  // Temiz bırak: testin açtığı belgeleri (yalnızca MCS_ ile başlayanlar) kaydetmeden kapat
+  for (const d of app.documents.slice()) if (String(d.title).indexOf("MCS_") === 0) await d.closeWithoutSaving();
   out.finished = new Date().toISOString();
   out.summary = { pass: out.results.filter((r) => r.status === "PASS").length, fail: out.results.filter((r) => r.status === "FAIL").length };
   save();

@@ -9,7 +9,11 @@ New-Item -ItemType Directory -Force $work | Out-Null
 $out = Join-Path $work "$Name.psjs"
 $res = Join-Path $work "$Name.json"
 Remove-Item $res -ErrorAction SilentlyContinue
-& powershell -NoProfile -File (Join-Path $PSScriptRoot "build-psjs.ps1") -Entry (Join-Path $PSScriptRoot "ps\$Name.test.js") -Out $out -ResultPath $res -AssetPath (Join-Path $root "tests\assets\turning-into-a-tentacle-monster-p1.jpg") | Out-Null
+# Test sayfası, kullanıcının belgeleriyle karışmasın diye AYRI adla kopyalanır.
+# Testler yalnızca adı "MCS_" ile başlayan kendi belgelerini açar/kapatır; kullanıcının belgelerine dokunmaz.
+$asset = Join-Path $work "MCS_TEST_page.jpg"
+Copy-Item (Join-Path (Join-Path $root "tests") (Join-Path "assets" "turning-into-a-tentacle-monster-p1.jpg")) $asset -Force
+& powershell -NoProfile -File (Join-Path $PSScriptRoot "build-psjs.ps1") -Entry (Join-Path (Join-Path $PSScriptRoot "ps") "$Name.test.js") -Out $out -ResultPath $res -AssetPath $asset | Out-Null
 Start-Process "C:\Program Files\Adobe\Adobe Photoshop 2026\Photoshop.exe" -ArgumentList "`"$out`""
 
 Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
