@@ -3,9 +3,15 @@
 // düğme ve anahtarlar div tabanlıdır (klavye: Enter/Boşluk, devre dışı: [disabled]).
 "use strict";
 
-function isDisabled(el) { return el.hasAttribute && el.hasAttribute("disabled"); }
+// İşlem sürerken (busy) yalnızca data-free işaretli kontroller (sekme, görünüm, Durdur, kart başlığı) çalışır.
+const busyState = { on: false, onBlocked: null };
+function isDisabled(el) {
+  if (el.hasAttribute && el.hasAttribute("disabled")) return true;
+  if (busyState.on && !(el.hasAttribute && el.hasAttribute("data-free"))) { if (busyState.onBlocked) busyState.onBlocked(); return true; }
+  return false;
+}
 
-/** Tıklama + klavye etkinleştirme; devre dışıysa yok sayar. */
+/** Tıklama + klavye etkinleştirme; devre dışıysa (veya işlem sürüyorsa) yok sayar. */
 function activate(el, fn) {
   el.addEventListener("click", (e) => { if (!isDisabled(el)) fn(e); });
   el.addEventListener("keydown", (e) => { if ((e.key === "Enter" || e.key === " ") && !isDisabled(el)) { e.preventDefault(); fn(e); } });
@@ -22,6 +28,7 @@ function buttonClasses(cls) {
   if (/\bseg\b/.test(cls)) out.push("sm");
   if (/\bactive\b/.test(cls)) out.push("primary");
   if (/\bblock\b/.test(cls)) out.push("block");
+  if (/\bicon\b/.test(cls)) out.push("icon");
   return out.join(" ");
 }
 
@@ -120,21 +127,22 @@ function card(id, title, sub, bodyNodes, state, defaultOpen) {
   const body = h("div", { class: "card-body" }, ...[].concat(bodyNodes));
   const chev = h("span", { class: "chev" }, open ? "▾" : "▸");
   const el = h("div", { class: "card" + (open ? "" : " collapsed") },
-    h("div", { class: "card-head", role: "button", tabindex: "0" }, h("span", { class: "title" }, title), sub ? h("span", { class: "sub" }, sub) : null, chev),
+    h("div", { class: "card-head", role: "button", tabindex: "0", "data-free": "1", "aria-expanded": open ? "true" : "false" }, h("span", { class: "title" }, title), sub ? h("span", { class: "sub", title: sub }, sub) : null, chev),
     body);
   activate(el.firstChild, () => {
     const now = !el.classList.contains("collapsed");
     el.classList.toggle("collapsed", now);
     chev.textContent = now ? "▸" : "▾";
-    if (state) state[id] = !now;
+    el.firstChild.setAttribute("aria-expanded", now ? "false" : "true");
+    if (state) { state[id] = !now; if (state.__save) state.__save(); }
   });
   return el;
 }
 
-function emptyState(icon, title, text) {
-  return h("div", { class: "empty" }, h("div", { class: "big" }, icon), h("div", { class: "title" }, title), h("div", null, text));
+function emptyState(icon, title, text, action) {
+  return h("div", { class: "empty" }, h("div", { class: "big" }, icon), h("div", { class: "title" }, title), h("div", null, text), action || null);
 }
 
 function setDisabled(el, b) { if (b) el.setAttribute("disabled", ""); else el.removeAttribute("disabled"); }
 
-module.exports = { h, clear, esc, select, numberInput, textInput, checkbox, colorInput, card, emptyState, setDisabled, activate };
+module.exports = { h, clear, esc, select, numberInput, textInput, checkbox, colorInput, card, emptyState, setDisabled, activate, busyState };

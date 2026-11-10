@@ -15,7 +15,7 @@ function show(title, bodyNodes, buttons, size) {
     for (const n of [].concat(bodyNodes)) if (n) body.appendChild(n);
     const acts = h("div", { class: "dlg-actions" });
     buttons.forEach((b, i) => {
-      acts.appendChild(h("button", { class: "btn" + (i === 0 ? " cta" : ""), onclick: () => { dlg.close(String(i)); } }, b));
+      acts.appendChild(h("button", { class: "btn" + (i === 0 ? " cta" : ""), "data-free": "1", onclick: () => { dlg.close(String(i)); } }, b));
     });
     body.appendChild(acts);
     const done = (v) => resolve(v == null || v === "" || v === "reasonCanceled" ? buttons.length - 1 : Number(v));

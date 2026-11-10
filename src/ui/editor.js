@@ -17,12 +17,34 @@ const STYLE_GROUPS = [
 ];
 
 class Editor {
-  constructor(root, app) { this.root = root; this.app = app; this.itemId = null; app.cardState = app.cardState || { text: true, meta: true, style: false, canvas: false, layer: false }; }
+  constructor(root, app) {
+    this.root = root; this.app = app; this.itemId = null; this.deferred = false;
+    // Kartların açık/kapalı durumu ayarlarda saklanır (ilerleyen açılım: ilk açılışta yalnız Metin ve Tür açık)
+    const ui = app.settings.ui;
+    ui.editorOpen = Object.assign({ text: true, meta: true, style: false, canvas: false, layer: false }, ui.editorOpen || {});
+    Object.defineProperty(ui.editorOpen, "__save", { value: () => app.saveSettings(), enumerable: false });
+    app.cardState = ui.editorOpen;
+    // Yazarken yeniden çizim yok: odak editörden çıkınca bekleyen güncelleme uygulanır
+    root.addEventListener("focusout", () => setTimeout(() => { if (this.deferred && !this.isTyping()) { this.deferred = false; this.render(); } }, 0));
+  }
+
+  isTyping() {
+    const a = document.activeElement;
+    if (!a) return false;
+    const tag = (a.tagName || "").toLowerCase();
+    if (tag !== "input" && tag !== "textarea" && tag !== "select") return false;
+    let n = a;
+    while (n && n !== this.root) n = n.parentNode;
+    return n === this.root;
+  }
 
   render() {
     const { store, pipeline } = this.app;
-    clear(this.root);
     const sel = store.selectedItems();
+    // Aynı öğe düzenlenirken (odak bir alanda) editör yeniden kurulmaz → imleç/yazı kaybolmaz
+    if (sel.length === 1 && sel[0].id === this.itemId && this.isTyping()) { this.deferred = true; return; }
+    const scroll = this.root.scrollTop, sameItem = sel.length === 1 && sel[0].id === this.itemId;
+    clear(this.root);
     if (!sel.length) {
       this.root.appendChild(emptyState("☐", "Öğe seçilmedi", "Listeden bir öğe seçin. Photoshop'ta bir çeviri katmanı seçtiğinizde de burada açılır."));
       return;
@@ -63,14 +85,14 @@ class Editor {
     this.root.appendChild(card("text", "Metin", it.translationEdited ? "elle düzenlendi" : "", [
       h("span", { class: "label-sm" }, "Çeviri"), trTa,
       h("span", { class: "label-sm" }, "Kaynak (OCR) — düzeltilebilir"), srcTa,
-      h("div", { class: "field-hint" }, `${it.direction === "top_to_bottom" ? "Dikey yazı" : "Yatay yazı"} · dil ${it.sourceLang || "?"} · güven ${it.confidence != null ? Math.round(it.confidence * 100) + "%" : "—"}`),
+      h("div", { class: "hint" }, `${it.direction === "top_to_bottom" ? "Dikey yazı" : "Yatay yazı"} · dil ${it.sourceLang || "?"} · güven ${it.confidence != null ? Math.round(it.confidence * 100) + "%" : "—"}`),
     ], cs));
 
     // ---- Tür, sıra, kilitler ----
     this.root.appendChild(card("meta", "Tür, sıra ve kilitler", it.typeConfirmed ? "" : "öneri onay bekliyor", [
       h("div", { class: "field" }, h("label", null, "Öğe türü"), select(ITEM_TYPES, it.type, (v) => ops.setField(it.id, "type", v)),
         it.typeConfirmed ? h("span", { class: "small ok" }, "✓ onaylı") : h("button", { class: "mini", onclick: () => ops.setField(it.id, "type", it.type) }, "Onayla")),
-      it.typeSuggested ? h("div", { class: "field-hint", style: { margin: "-4px 0 8px 110px" } }, `Öneri: ${TYPE_LABEL[it.typeSuggested]}${it.typeReasons ? " — " + it.typeReasons.join(", ") : ""}`) : null,
+      it.typeSuggested ? h("div", { class: "hint" }, `Öneri: ${TYPE_LABEL[it.typeSuggested]}${it.typeReasons ? " — " + it.typeReasons.join(", ") : ""}`) : null,
       h("div", { class: "field" }, h("label", null, "Ton"), select(TONES, it.tone || "normal", (v) => ops.setField(it.id, "tone", v))),
       h("div", { class: "field" }, h("label", null, "Okuma sırası"), numberInput(it.order, (v) => {
         const items = store.items(); const from = items.indexOf(it); const to = Math.max(0, Math.min(items.length - 1, (v || 1) - 1));
@@ -86,9 +108,9 @@ class Editor {
     const checks = this.app.settings.fontChecks || {};
     const fieldMap = {};
     for (const f of STYLE_FIELDS) fieldMap[f.key] = f;
-    const styleNodes = [h("div", { class: "field-hint", style: { marginBottom: "10px" } }, "Öncelik: Manuel → Bölüm → Seri → Genel → Varsayılan. Turuncu etiket = sizin değeriniz (↺ ile kurala döner).")];
+    const styleNodes = [h("div", { class: "hint" }, "Öncelik: Manuel → Bölüm → Seri → Genel → Varsayılan. Turuncu etiket = sizin değeriniz (↺ ile kurala döner).")];
     for (const [gname, keys] of STYLE_GROUPS) {
-      styleNodes.push(h("div", { class: "label-sm", style: { marginTop: "6px", color: "#868c94" } }, gname.toLocaleUpperCase("tr")));
+      styleNodes.push(h("div", { class: "group-label" }, gname.toLocaleUpperCase("tr")));
       for (const key of keys) {
         const f = fieldMap[key];
         const v = resolved.style[key];
@@ -105,7 +127,7 @@ class Editor {
         styleNodes.push(h("div", { class: "field" }, h("label", null, f.label), ctl, tag, reset));
       }
     }
-    if (live && live.rangeCount > 1) styleNodes.push(h("div", { class: "field-hint" }, `Katmanda ${live.rangeCount} farklı karakter biçimi var; bir alan değişince diğerleri korunur.`));
+    if (live && live.rangeCount > 1) styleNodes.push(h("div", { class: "hint" }, `Katmanda ${live.rangeCount} farklı karakter biçimi var; bir alan değişince diğerleri korunur.`));
     this.root.appendChild(card("style", "Biçim", (resolved.style.font || "") + " · " + Math.round(resolved.style.sizePx || 0) + " px", styleNodes, cs));
 
     // ---- Tuval ----
@@ -126,7 +148,7 @@ class Editor {
         h("div", { class: "field" }, h("label", null, "Merkez X / Y"), ix, iy, h("button", { class: "mini", onclick: act(() => ops.moveTo(it.id, Number(ix.value), Number(iy.value))) }, "Taşı")),
         h("div", { class: "field" }, h("label", null, "Metin kutusu"), bw, bh, h("button", { class: "mini", title: "Yazı ölçeklenmez; yalnız kutu değişir", onclick: act(() => ops.resizeBox(it.id, Number(bw.value), Number(bh.value))) }, "Boyutlandır")),
         h("div", { class: "field" }, h("label", null, "Katman ölçeği %"), sc, h("button", { class: "mini", title: "Katman dönüşümü; kutu boyutlandırmadan ayrı", onclick: act(() => ops.scaleLayer(it.id, Number(sc.value))) }, "Ölçekle"),
-          live.scalePct && live.scalePct !== 100 ? h("span", { class: "field-hint" }, `şu an %${live.scalePct}`) : null),
+          live.scalePct && live.scalePct !== 100 ? h("span", { class: "hint" }, `şu an %${live.scalePct}`) : null),
         h("div", { class: "field" }, h("label", null, "Açı°"), ang, h("button", { class: "mini", onclick: act(() => ops.rotateTo(it.id, Number(ang.value))) }, "Döndür")),
         h("div", { class: "row tight" },
           h("button", { class: "mini", onclick: act(() => ops.refit(it.id)) }, "Balona sığdır"),
@@ -140,13 +162,12 @@ class Editor {
     // ---- Katman ve temizlik ----
     this.root.appendChild(card("layer", "Katman ve temizlik", it.cleanMethod ? (METHODS[it.cleanMethod] || {}).label : "temizlenmedi", [
       it.cleanMethod ? h("div", { class: "notice" }, `${(METHODS[it.cleanMethod] || {}).label || it.cleanMethod}: ${it.cleanReason || ""}`) : null,
-      it.cleanMetrics ? h("div", { class: "field-hint", style: { marginBottom: "8px" } }, `Yazı izi ${it.cleanMetrics.residual} · çizgi kırılması ${it.cleanMetrics.lineBreak} · maske dışı değişim ${it.cleanMetrics.outsideChanged}`) : null,
+      it.cleanMetrics ? h("div", { class: "hint" }, `Yazı izi ${it.cleanMetrics.residual} · çizgi kırılması ${it.cleanMetrics.lineBreak} · maske dışı değişim ${it.cleanMetrics.outsideChanged}`) : null,
       h("div", { class: "row tight" },
         h("button", { class: "mini", title: "Photoshop'ta seçili mevcut metin katmanını bu öğeye bağla", onclick: act(() => ops.linkActiveLayer(it.id)) }, "Seçili PS katmanını eşle"),
-        it.type === "sfx" && hasLayer ? h("button", { class: "mini", title: "Görünen kopya rasterleşir; düzenlenebilir metin gizli 'SFX Kaynak' grubunda saklanır", onclick: act(() => ops.rasterizeSfx(it.id)) }, it.rasterized ? "Kaynaktan yeniden raster" : "SFX rasterleştir") : null,
-        h("button", { class: "mini quiet", onclick: act(() => ops.deleteItem(it.id, false)) }, "Listeden kaldır"),
-        h("button", { class: "mini quiet danger", onclick: act(() => ops.deleteItem(it.id, true)) }, "Katmanlarıyla sil")),
+        it.type === "sfx" && hasLayer ? h("button", { class: "mini", title: "Görünen kopya rasterleşir; düzenlenebilir metin gizli 'SFX Kaynak' grubunda saklanır", onclick: act(() => ops.rasterizeSfx(it.id)) }, it.rasterized ? "Kaynaktan yeniden raster" : "SFX rasterleştir") : null),
     ], cs));
+    if (sameItem) this.root.scrollTop = scroll;
   }
 
   renderMulti(sel) {

@@ -5,94 +5,97 @@
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
+  <!-- UXP: header/footer/section yerine açık flex düzenli div'ler; grid yok; kontroller div tabanlı -->
   <div id="app">
     <div id="top">
-      <div class="brand-row">
-        <div class="brand">
-          <span class="brand-title">MANGA ÇEVİRİ STÜDYOSU</span>
-          <span id="docTitle" class="doc" title="Geçerli belge">Belge açık değil</span>
-          <span id="docMeta" class="doc-meta"></span>
+      <div class="topbar">
+        <div class="doc-block" title="Etkin Photoshop belgesi">
+          <div id="docTitle" class="doc-title">Belge açık değil</div>
+          <div id="docMeta" class="doc-meta">Photoshop'ta bir sayfa açın</div>
         </div>
-        <div class="credit-pill" id="creditPill" title="Torii kalan kredi">
+        <div class="credit-pill" id="creditPill" role="button" tabindex="0" data-free="1" title="Torii kalan kredi — tıklayınca yenilenir">
           <span class="credit-dot"></span><span class="credit-val" id="credits">— kr</span>
         </div>
       </div>
-
-      <div class="ctrl-row">
-        <span class="ctrl-label">Seri</span>
-        <select id="profileSel" aria-label="Seri profili"></select>
-      </div>
-      <div class="ctrl-row">
-        <span class="ctrl-label">Kapsam</span>
-        <div class="segmented" id="scopeSeg" role="radiogroup" aria-label="İşlem kapsamı">
-          <div class="opt" data-scope="region" role="radio" tabindex="0" title="Photoshop'taki seçili bölge">Bölge</div>
-          <div class="opt" data-scope="selected" role="radio" tabindex="0" title="Listede seçili öğeler">Seçili</div>
-          <div class="opt" data-scope="page" role="radio" tabindex="0" title="Etkin sayfa">Sayfa</div>
-          <div class="opt" data-scope="chapter" role="radio" tabindex="0" title="Bölümdeki tüm sayfalar">Bölüm</div>
+      <div class="controls">
+        <div class="ctl ctl-profile">
+          <span class="ctl-label">Seri</span>
+          <select id="profileSel" aria-label="Seri profili"></select>
+        </div>
+        <div class="ctl ctl-scope">
+          <span class="ctl-label">Kapsam</span>
+          <div class="segmented" id="scopeSeg" role="radiogroup" aria-label="İşlem kapsamı">
+            <div class="opt" data-scope="selected" role="radio" tabindex="0" title="Listede seçili öğeler">Seçili</div>
+            <div class="opt" data-scope="region" role="radio" tabindex="0" title="Photoshop'taki seçili bölge">Bölge</div>
+            <div class="opt" data-scope="page" role="radio" tabindex="0" title="Etkin sayfa">Sayfa</div>
+            <div class="opt" data-scope="chapter" role="radio" tabindex="0" title="Bölümdeki tüm sayfalar">Bölüm</div>
+          </div>
         </div>
       </div>
-      <div class="chips" id="filterRow" role="group" aria-label="Nesne filtresi">
-        <div class="chip dialog" data-filter="dialog" tabindex="0"><span class="dot"></span>Diyalog</div>
-        <div class="chip narration" data-filter="narration" tabindex="0"><span class="dot"></span>Anlatım</div>
-        <div class="chip offbubble" data-filter="offbubble" tabindex="0"><span class="dot"></span>Balon dışı</div>
-        <div class="chip sfx" data-filter="sfx" tabindex="0"><span class="dot"></span>SFX</div>
-        <div class="chip focus-mode" id="bubblesOnly" tabindex="0" title="Yalnızca onaylanan diyalog balonları çevrilir, temizlenir ve dizilir. Diğer türlerin pikselleri değişmez."><span class="dot"></span>Sadece Balonlar</div>
-      </div>
       <div class="tabs" role="tablist">
-        <div class="tab active" data-tab="items" role="tab" tabindex="0">Öğeler</div>
-        <div class="tab" data-tab="profile" role="tab" tabindex="0">Profil</div>
-        <div class="tab" data-tab="chapter" role="tab" tabindex="0">Bölüm</div>
-        <div class="tab" data-tab="clean" role="tab" tabindex="0">Temizlik</div>
-        <div class="tab" data-tab="tools" role="tab" tabindex="0">Araçlar</div>
-        <div class="tab" data-tab="settings" role="tab" tabindex="0">Ayarlar</div>
-        <div class="tab" data-tab="log" role="tab" tabindex="0">Log</div>
+        <div class="tab active" data-tab="items" role="tab" tabindex="0" data-free="1">Öğeler</div>
+        <div class="tab" data-tab="chapter" role="tab" tabindex="0" data-free="1">Bölüm</div>
+        <div class="tab" data-tab="profile" role="tab" tabindex="0" data-free="1">Profil</div>
+        <div class="tab" data-tab="clean" role="tab" tabindex="0" data-free="1">Temizlik</div>
+        <div class="tab" data-tab="settings" role="tab" tabindex="0" data-free="1">Ayarlar</div>
       </div>
     </div>
 
     <div id="middle">
       <div class="pane active" data-pane="items">
-        <div class="segs">
-          <div class="segmented" id="viewSeg">
-            <div class="opt on" data-view="list" tabindex="0">Liste</div>
-            <div class="opt" data-view="editor" tabindex="0">Editör</div>
+        <div class="items-head">
+          <div class="chips" id="filterRow" role="group" aria-label="İşlenecek türler">
+            <div class="chip t-dialog" data-filter="dialog" tabindex="0" title="Diyalog"><span class="dot"></span>Diyalog</div>
+            <div class="chip t-narration" data-filter="narration" tabindex="0" title="Anlatım"><span class="dot"></span>Anlatım</div>
+            <div class="chip t-offbubble" data-filter="offbubble" tabindex="0" title="Balon dışı"><span class="dot"></span>Balon dışı</div>
+            <div class="chip t-sfx" data-filter="sfx" tabindex="0" title="SFX"><span class="dot"></span>SFX</div>
+            <div class="chip focus-mode" id="bubblesOnly" tabindex="0" title="Yalnızca onaylanan diyalog balonları çevrilir, temizlenir ve dizilir. Diğer türlerin pikselleri değişmez."><span class="dot"></span>Sadece Balonlar</div>
+          </div>
+          <div class="view-toggle segmented" id="viewSeg" aria-label="Görünüm">
+            <div class="opt on" data-view="list" tabindex="0" data-free="1">Liste</div>
+            <div class="opt" data-view="editor" tabindex="0" data-free="1">Editör</div>
           </div>
         </div>
         <div id="itemsSplit">
-          <div id="listWrap" tabindex="0" aria-label="Öğe listesi">
-            <div class="list-head"><span class="list-title" id="listTitle">ÖĞELER</span></div>
-            <div id="listToolbar" class="toolbar"></div>
-            <div id="list" role="listbox"></div>
+          <div id="listWrap" aria-label="Öğe listesi">
+            <div class="list-head">
+              <span class="list-title" id="listTitle">ÖĞELER</span>
+              <div id="listToolbar" class="toolbar"></div>
+            </div>
+            <div id="list" role="listbox" tabindex="0" aria-label="Öğeler — ↑↓ gez, Alt+↑↓ sırala, Delete sil"></div>
           </div>
-          <div id="splitter" class="splitter" role="separator" aria-orientation="vertical" tabindex="0" title="Sürükleyerek liste / editör genişliğini ayarlayın · çift tık: varsayılan · ← → tuşları"><div class="grip"></div></div>
+          <div id="splitter" class="splitter" role="separator" aria-orientation="vertical" tabindex="0" data-free="1" title="Sürükleyerek liste / editör genişliğini ayarlayın · çift tık: varsayılan · ← → tuşları"><div class="grip"></div></div>
           <div id="editor" aria-label="Seçili öğe editörü"></div>
         </div>
       </div>
-      <div class="pane" data-pane="profile"></div>
       <div class="pane" data-pane="chapter"></div>
+      <div class="pane" data-pane="profile"></div>
       <div class="pane" data-pane="clean"></div>
-      <div class="pane" data-pane="tools"></div>
       <div class="pane" data-pane="settings"></div>
-      <div class="pane" data-pane="log"></div>
     </div>
 
     <div id="bottom">
-      <div class="busy-line" id="busyLine" role="status" aria-live="polite">
-        <span class="spinner" id="spinner">◐</span>
-        <span class="busy-text" id="busyText">Çalışıyor…</span>
-        <span class="elapsed" id="elapsed">0 sn</span>
+      <div class="busy" id="busyBox" role="status" aria-live="polite">
+        <div class="busy-row">
+          <span class="spinner" id="spinner">◐</span>
+          <span class="busy-text" id="busyText">Çalışıyor…</span>
+          <span class="elapsed" id="elapsed">0 sn</span>
+          <div class="btn sm stop" id="btnStop" role="button" tabindex="0" data-free="1" title="Sonraki adımda durdur (Esc)">■ Durdur</div>
+        </div>
+        <div id="progress"><div id="progressBar"></div></div>
       </div>
-      <div class="status-row"><div id="status" role="status" aria-live="polite">Hazır</div></div>
-      <div id="progress"><div id="progressBar"></div></div>
-      <div class="steps">
-        <div class="btn" id="btnDetect" role="button" tabindex="0" title="Torii OCR ile metinleri bul"><span class="n">1</span>Tespit</div>
-        <div class="btn" id="btnClean" role="button" tabindex="0" title="Yalnızca temizle"><span class="n">2</span>Temizle</div>
-        <div class="btn" id="btnTranslate" role="button" tabindex="0" title="Yalnızca çevir"><span class="n">3</span>Çevir</div>
-        <div class="btn" id="btnTypeset" role="button" tabindex="0" title="Yalnızca dizgi"><span class="n">4</span>Dizgi</div>
+      <div class="status" id="status" role="status" aria-live="polite">Hazır</div>
+      <div class="steps" role="group" aria-label="Adımlar">
+        <div class="btn step" id="btnDetect" role="button" tabindex="0" title="Torii OCR ile metinleri bul (1 kredi)"><span class="n">1</span>Tespit</div>
+        <span class="arrow">›</span>
+        <div class="btn step" id="btnClean" role="button" tabindex="0" title="Yazıları sil (balon: kredisiz yerel dolgu; çizim: Torii 0,02 / Adobe)"><span class="n">2</span>Temizle</div>
+        <span class="arrow">›</span>
+        <div class="btn step" id="btnTranslate" role="button" tabindex="0" title="Torii ile çevir (≥1 kredi)"><span class="n">3</span>Çevir</div>
+        <span class="arrow">›</span>
+        <div class="btn step" id="btnTypeset" role="button" tabindex="0" title="Düzenlenebilir metin katmanları (kredisiz)"><span class="n">4</span>Dizgi</div>
       </div>
-      <div class="run-row">
-        <div class="btn primary" id="btnFull" role="button" tabindex="0">▶  Tam İşlem</div>
-        <div class="btn ghost" id="btnStop" role="button" tabindex="0" title="Bölüm işlemini sonraki sayfada durdur">Durdur</div>
-      </div>
+      <div class="btn primary run" id="btnFull" role="button" tabindex="0" title="Sayfayı baştan işler: tespit → temizlik → çeviri → dizgi">▶  Tam İşlem</div>
+      <div class="mode-line" id="modeLine"></div>
     </div>
   </div>
   <dialog id="dlg"><div id="dlgBody"></div></dialog>
