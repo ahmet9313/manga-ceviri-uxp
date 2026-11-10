@@ -8,7 +8,7 @@ Arayüz Türkçe, varsayılan hedef dil `tr`. Manifest v5, Adobe UXP.
 | Doğrulanan Photoshop | **27.11 (Photoshop 2026), Windows 11** — gerçek kabul testleri bu sürümde koşuldu |
 | Manifestte beyan edilen en düşük sürüm | 25.0 (Imaging API, `putLayerMask`, `getSelection` gerektirir; 25.x–26.x **test edilmedi**) |
 | Ana motor | Torii resmi API (`https://api.toriitranslate.com`) — OCR, çeviri, varsayılan temizlik |
-| İsteğe bağlı | Adobe İçerik Duyarlı Dolgu (yerel), Üretken Dolgu (Photoshop arayüzüne devir), Firefly Services (sunucu vekili) |
+| İsteğe bağlı | Adobe Üretken Dolgu (panelden otomatik), İçerik Duyarlı Dolgu (yerel), Firefly Services (sunucu vekili) |
 
 ---
 
@@ -19,7 +19,7 @@ Arayüz Türkçe, varsayılan hedef dil `tr`. Manifest v5, Adobe UXP.
 3. Photoshop'ta *Tercihler › Eklentiler › "Geliştirici Modunu Etkinleştir"* açık olmalı (UDT ilk açılışta da sorar).
 4. UDT'de **Add Plugin** → bu klasördeki `manifest.json` dosyasını seçin.
 5. Listede "Manga Çeviri Stüdyosu" satırında **••• › Load** (veya **Load**). Panel Photoshop'ta *Eklentiler › Manga Çeviri* altında açılır.
-6. Kod değiştirdiyseniz **Reload**; hata ayıklama için **Debug** (konsolda `MCS` nesnesi erişilebilir).
+6. Kod değiştirdiyseniz **Reload**. UDT açık iken `powershell -File toolsDt.ps1 -Action load|reload` da yükler (tıklamasız).
 
 ### İmzalı .ccx paketi
 
@@ -31,8 +31,8 @@ Arayüz Türkçe, varsayılan hedef dil `tr`. Manifest v5, Adobe UXP.
 
 ### Torii (zorunlu)
 1. https://toriitranslate.com/api sayfasından anahtar oluşturun (`sk_torii_…`). Anahtar yalnızca oluşturulduğunda tam gösterilir;
-   panelde maskeli görünen `sk_torii_80n3F…BUfA` biçimi **çalışmaz**.
-2. Panel › **Ayarlar** › *Torii API Anahtarı* → **Kaydet** → **Bağlantıyı Test Et** (kalan kredi ve anahtar adı görünür).
+   panelde maskeli görünen `sk_torii_abcde…wxyz` biçimi **çalışmaz**.
+2. Panel › **Ayarlar** › *Torii API* → anahtarı yapıştırıp **Kaydet** (otomatik doğrulanır, kalan kredi görünür).
 3. Anahtar **UXP Secure Storage**'da saklanır; ayar dosyasına, profil dışa aktarımına ve loglara yazılmaz (loglarda `sk_torii_****`).
 
 Kullanılan uç noktalar (Kasım 2026 dokümanına göre):
@@ -63,44 +63,38 @@ listesine ekleyin. Vekil doğrulanmadıkça Firefly seçenekleri panelde "kurulu
 
 ## 3. Kullanım
 
-**Üst bölüm:** geçerli belge · seri profili · işlem kapsamı (*Seçili bölge / Seçili öğeler / Sayfa / Bölüm*) · nesne filtresi
-(*Diyalog, Anlatım, Balon dışı, SFX*) · **Sadece Balonlar**.
-**Orta:** öğe listesi + seçili öğe editörü (dar panelde *Liste / Editör* geçişi). **Alt:** *Tespit Et, Yalnızca Temizle, Yalnızca Çevir, Yalnızca Dizgi, Tam İşlem*.
+**Üst şerit:** belge adı ve durum özeti · kalan kredi (tıklayınca yenilenir) · seri profili · kapsam (*Seçili / Bölge / Sayfa / Bölüm*).
+**Sekmeler:** Öğeler · Bölüm · Profil · Temizlik · Ayarlar (Log, Eylemler, BYOK, Firefly → *Ayarlar › Gelişmiş*).
+**Alt şerit:** çalışırken adım adı + geçen süre + ilerleme + **■ Durdur** (Esc); sonuç satırı (süre, harcanan kredi, kullanılan yöntem);
+adımlar **1 Tespit › 2 Temizle › 3 Çevir › 4 Dizgi**; tam genişlik **▶ Tam İşlem**; Tam İşlem modu ve son çalıştırmanın maliyeti.
+Bir işlem sürerken diğer düğmeler kilitlidir (sekmeler ve görünüm değişebilir).
 
-Tek sayfa akışı:
-1. Sayfayı açın → **Tespit Et**. Öğeler okuma sırasıyla listelenir; tür önerisi gerekçesiyle gösterilir (kesik çerçeve = onaylanmamış).
-2. Türleri düzeltin/onaylayın, kaynak metni düzeltin. Eksik balon: Photoshop'ta seçin → listede **Seçimi okut**.
-3. **Yalnızca Çevir** → **Yalnızca Temizle** → **Yalnızca Dizgi** (veya **Tam İşlem**).
-4. PSD'de üç grup oluşur: **Çeviri** (metin katmanları) › **Temizlik** (öğe başına maskeli yama) › **Orijinal** (dokunulmaz).
+Tek sayfa akışı: sayfayı açın → **▶ Tam İşlem**. Sayfa her seferinde baştan işlenir (kilitli öğeler korunur; Ctrl+Z ile tek adımda geri alınır).
+Adımları tek tek de çalıştırabilirsiniz. PSD'de üç grup: **Çeviri** (düzenlenebilir metin) › **Temizlik** (öğe başına maskeli katman) › **Orijinal** (dokunulmaz).
 
-**Sadece Balonlar:** OCR tüm metinleri listeler; yalnızca **onaylanan diyalog balonları** çevrilir, temizlenir ve dizilir.
-Kapsam eklentinin kendi filtresiyle uygulanır (Torii'nin `bubbles_only` alanına güvenilmez); SFX/anlatım/balon dışı pikseller değişmez.
+**Tam İşlem modu (Ayarlar):**
+- *Modüler* (varsayılan): OCR 1 + çeviri ≥1 + çizim üstü inpaint 0,02 kredi. Düz zeminli kapalı balonlar balon rengiyle **kredisiz** yerel
+  dolguyla temizlenir; balon içindeki her parça (kopuk nokta, taşan satır) dahil.
+- *Tek istek*: Torii sayfayı kendisi çevirir ve temizler; gerçek ölçüm 800×10000 sayfada **6–8,4 kredi**.
+- Ücretli her yanıt gelir gelmez önbelleğe yazılır; aynı istek tekrarlanırsa (ör. sonraki adım hata verdiyse) yeniden kredi harcanmaz.
 
-**Düzenleme:** editörde çeviri, tür, ton, okuma sırası, kilitler (*Metin / Biçim / Konum*), tüm stil alanları (her alanın yanında
-uygulanan kaynak: *Manuel · Bölüm · Seri · Genel · Varsayılan* ve kural adı), konum, **kutuyu boyutlandır** (yazı ölçeklenmez) ve
-**katmanı ölçekle** (dönüşüm) ayrı ayrı. Sürükleme pedleri (✥ Taşı, ⟳ Döndür, ▭ Kutu) canlı önizler, bırakınca **tek** geçmiş adımı yazar,
-`Esc`/odak kaybında başlangıca döner. Tuvalde asıl düzenleme için *PS dönüştür (Ctrl+T)* ve *Metin aracı* düğmeleri yerel araçlara geçer.
+**Temizlik yöntemleri (tamamen otomatik, sizden işlem istenmez):** düz balon → yerel dolgu; tramlı/renkli zemin → Torii Inpaint;
+çizim üstü SFX → **Adobe Üretken Dolgu → (olmazsa) İçerik Duyarlı Dolgu → (olmazsa) Torii**. Hangi yöntemin neden kullanıldığı sonuç
+satırında ve öğenin editöründe yazar. Her yöntemde sonuç ayrı katmanda ve yalnızca maske içinde görünür; maske dışı piksel değişmez.
 
-**Photoshop'ta elle değişiklik:** Metin aracıyla değiştirdiğiniz yazı ve biçim panele döner; toplu dizgi bunları **manuel değer** olarak
-korur (kilit/manuel değer kaldırılana kadar). Karakter bazlı biçimler, başka bir alan değiştirilirken korunur.
+**Sadece Balonlar:** yalnızca onaylanan diyalog balonları çevrilir, temizlenir ve dizilir; diğer türlerin pikselleri değişmez.
 
-**Liste sırası ≠ tuvalde taşıma ≠ katman sırası:** liste yalnızca ⋮⋮ tutamacından sürüklenir (kenarda otomatik kaydırma, bırakma çizgisi,
-`Alt+↑/↓` klavye); katman sırası editördeki *Katman ↑/↓* ile değişir.
+**Öğeler sekmesi:** tür çipleri (Diyalog yeşil · Anlatım sarı · Balon dışı mavi · SFX pembe) neyin işleneceğini seçer. Liste ↔ editör
+arasındaki ayırıcı sürüklenir (bırakınca uygulanır; çift tık = varsayılan; ← →). Dar panelde *Liste / Editör* geçişi.
+Klavye: ↑↓ gez · Alt+↑↓ sırala · Delete sil · Enter editör · Esc seçimi bırak. Sıralama yalnızca ⋮⋮ tutamacından sürüklenir.
+Editör: çeviri/kaynak, tür, ton, sıra, kilitler; Biçim (her alanın kaynağı: Manuel · Bölüm · Seri · Genel · Varsayılan); Tuval (taşı/döndür/kutu
+pedleri — bırakınca tek geçmiş adımı, Esc iptal); Katman ve temizlik (kullanılan yöntem ve nedeni).
 
-**Profiller ve kurallar (Profil sekmesi):** seri başına font, min/maks punto, satır/harf aralığı, hizalama, kontur, gölge, çeviri talimatı,
-sözlük, karakter adları, hitap biçimi, temizlik tercihi. Kurallar kod yazmadan: *öğe türü + ton + koşullar → stil*, öncelik değeri en yüksek
-eşleşme kazanır. "Örnek kural seti ekle" normal/bağırma/fısıltı/düşünce/SFX kurallarını oluşturur. Kopyala / içe aktar / dışa aktar.
-**Glif testi** fontta `ÇĞİÖŞÜ çğıöşü` eksiklerini bulur; eksikse dizgide yedek font uygulanır. `â/Â → a/A` ayrı seçenektir.
+**Photoshop'ta elle değişiklik:** metin aracıyla yaptığınız yazı/biçim değişiklikleri panele döner ve toplu dizgide **manuel değer** olarak korunur.
 
-**Bölüm sekmesi:** açık belgelerden veya klasörden bölüm; bölüm kuralları (serinin üstünde); bağlam sayfadan sayfaya taşınır;
-**bul-değiştir** önizlemeli (kilitli öğeler atlanır). Bölüm kapsamında işlem öncesi sayfa listesi ve tahmini kredi gösterilir.
-
-**Temizlik sekmesi:** *Otomatik* (düz balon → yerel dolgu; tram → Torii; çizim üstü SFX → Torii, Adobe önerisi yalnızca onayla),
-*Torii Inpaint*, *Yerel düz dolgu*, *Adobe İçerik Duyarlı Dolgu*, *Üretken Dolgu (Photoshop arayüzü)*, *Firefly (sunucu)*.
-Önizleme: Orijinal / Maske / Sonuç + yazı izi, çizgi kırılması, maske dışı değişen piksel, süre, kredi. **Nesne Kaldır** ve **Görsel Üret** ayrı.
-
-**Araçlar sekmesi:** Photoshop Eylemleri (Actions) listeleme/çalıştırma, yerel araçlara geçiş, mevcut metin katmanından öğe, eşitleme,
-**Canlı kabul testi** (gerçek Torii çağrılarıyla; rapor eklenti veri klasöründe `selftest-report.json`).
+**Profil:** dil (kaynak dil seçilirse başka dildeki yazılar ne çevrilir ne silinir), okuma yönü, çeviri modeli, talimat, sözlük, karakterler,
+taban stil, kurallar (*tür + ton + koşul → stil*), Türkçe düzeltme ve glif testi. Dışa aktarılan profil anahtar içermez.
+**Bölüm:** açık belgelerden / klasörden bölüm, bölüm kuralları, sayfadan sayfaya bağlam, önizlemeli bul-değiştir.
 
 ## 4. Kalıcılık
 Öğe-katman eşleşmeleri, kilitler, manuel değerler, bağlam zinciri PSD'nin XMP'sine (`mct:state`) yazılır; **geçmiş adımı oluşturmaz**.
@@ -116,15 +110,32 @@ src/ps/*                batchPlay/DOM sarmalayıcıları (PS 27.11'de doğrulana
 src/model/*             kurallar ve öncelik, profiller, sınıflandırma, temizlik analizi, durum deposu
 src/ui/*                liste (tutamaçlı sıralama), editör, sekmeler, diyaloglar
 server/firefly-proxy.mjs  Firefly Services vekili
-tests/                  Photoshop içinde koşan testler (+ sonuçlar)
-tools/package-ccx.ps1   .ccx paketleme
+tests/ps/               Photoshop içinde koşan testler · tests/logic/ Photoshop'suz mantık testleri
+src/dev/                Geliştirici araçları (canlı test) — .ccx paketine girmez
+tools/package-ccx.ps1   .ccx paketleme (yalnız çalışma zamanı dosyaları) · tools/udt.ps1 tıklamasız yükleme · tools/capture-ps.ps1 yalnız Photoshop penceresi görüntüsü
 ```
 
 ## 6. Testleri çalıştırma
+Torii ve Adobe Üretken Dolgu çağrıları testlerde **her zaman sahtedir** (test düzeneği gerçek ağ isteğini ve gerçek Üretken Dolgu'yu engeller).
+Testler yalnızca `MCS_` ile başlayan kendi kopyalarını açar ve bitince kapatır; sizin belgelerinize dokunmaz.
+
+Photoshop gerektirmeyen mantık testleri (Bun):
+```
+bun tests/logic/bubble.test.js    # balon tespiti, balon içi mürekkep, tür
+bun tests/logic/client.test.js    # Torii hata/zaman aşımı/geri çekilme davranışı
+bun tests/logic/upper.test.js     # Türkçe büyük harf
+```
 Photoshop açıkken:
 ```
 powershell -File tests\run-ps-test.ps1 -Name load         # tüm modüller yükleniyor mu
 powershell -File tests\run-ps-test.ps1 -Name unit         # Torii istemcisi, eşleme, öncelik, PNG, maskeleme
-powershell -File tests\run-ps-test.ps1 -Name acceptance   # gerçek belge üzerinde kabul testleri
+powershell -File tests\run-ps-test.ps1 -Name refine       # tür, balon, temizlik izi, maske dışı piksel
+powershell -File tests\run-ps-test.ps1 -Name chain        # SFX yedek zinciri (Üretken → İçerik Duyarlı → Torii), maske dışı korunuyor mu
+powershell -File tests\run-ps-test.ps1 -Name acceptance   # kabul senaryoları
+powershell -File tests\run-ps-test.ps1 -Name bench        # 800×10000 sayfada süre ölçümü (sahte Torii)
 ```
-Photoshop betik onayı sorabilir ("JavaScript dosyası yüklemek üzeresiniz" → Evet). Ayrıntılar: `TEST-RAPORU.md`.
+Diğerleri: `decode`, `reset`, `sfxclean`, `sfxnoerase`. Photoshop betik onayı ("JavaScript dosyası yüklemek üzeresiniz") yalnızca Photoshop'a
+ait "Evet" düğmesine otomatik basılarak geçilir. Ayrıntılar ve sonuçlar: `TEST-RAPORU.md`, denetim: `DENETIM.md`.
+
+> Not (Claude Code / VS Code terminali): ortamda `ELECTRON_RUN_AS_NODE=1` varsa UXP Developer Tools açılıp hemen kapanır;
+> UDT'yi bu değişken olmadan başlatın.

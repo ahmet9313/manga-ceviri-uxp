@@ -22,7 +22,7 @@ const TEXTS = [
 ];
 
 // KREDİ HARCAMAMAK İÇİN: Adobe Üretken Dolgu çağrısı sahte (her zaman hata → otomatik İçerik Duyarlı yedeği)
-R("../src/ps/adobe").replay = async () => { throw new Error("test: Üretken Dolgu kullanılamıyor"); };
+R("../src/ps/adobe").generativeFill = async () => { throw new Error("test: Üretken Dolgu kullanılamıyor"); }; // kredi koruması
 api.modal("Tür ve temizlik testi", async () => {
   for (const d of app.documents.slice()) if (String(d.title).indexOf("MCS_") === 0) await d.closeWithoutSaving();
   await app.open(await lfs.getEntryWithUrl("file:" + ASSET_PATH));
@@ -55,6 +55,7 @@ api.modal("Tür ve temizlik testi", async () => {
   // Oturum + Torii benzeri öğeler: çeviri kutusu = orijinal yazının %65'i (üst kısma kaymış)
   const store = new Store(); store.settings = profiles.defaultSettings(); store.settings.fontChecks = {};
   const P = new Pipeline(store, null, { confirm: async () => 0, notify: () => {}, progress: () => {}, preview: async () => true });
+  P.debug = true; // teşhis maskeleri (_lastMasks) yalnız geliştirici/test modunda tutulur
   const s = store.attach(doc.id, doc.title, emptyState()); store.activeDocId = doc.id;
   s.state.items = TEXTS.map((t, k) => {
     const [l, tp, r, b] = t.r;

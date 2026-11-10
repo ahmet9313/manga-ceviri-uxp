@@ -35,13 +35,13 @@ api.modal("SFX temizlik testi", async () => {
   // KREDİ HARCAMAMAK İÇİN: gerçek Üretken Dolgu çağrısı yerine her zaman hata veren sahte çağrı (otomatik yedek zincirini test eder)
   const adobeMod = R("../src/ps/adobe");
   let adobeCalls = 0;
-  adobeMod.replay = async () => { adobeCalls++; throw new Error("test: Üretken Dolgu kullanılamıyor"); };
+  adobeMod.generativeFill = async () => { adobeCalls++; throw new Error("test: Üretken Dolgu kullanılamıyor"); };
   t_("Otomatik SFX yöntemi önce Adobe Üretken Dolgu'yu dener", P.sfxMethod() === "adobeGenerative", { method: P.sfxMethod() });
   const t = P.captureTarget();
   try { await P.applyInpaintedDiff(s, t, orig, inp, s.state.items); }
   catch (e) { t_("SFX temizliği çalıştı", false, { error: String(e.message) }); }
-  t_("Adobe başarısız → aynı öğe OTOMATİK İçerik Duyarlı Dolgu ile temizlendi (elle adım yok)", it.cleanMethod === "contentAware" && adobeCalls === 1 && !it.awaitingHandoff, { method: it.cleanMethod, reason: it.cleanReason, adobeCalls });
-  t_("Başarısızlık hatırlandı: sonraki SFX'ler doğrudan İçerik Duyarlı", store.settings.adobe.directFailed === true && P.sfxMethod() === "contentAware", { next: P.sfxMethod() });
+  t_("Adobe başarısız → aynı öğe OTOMATİK İçerik Duyarlı Dolgu ile temizlendi (elle adım yok)", it.cleanMethod === "contentAware" && adobeCalls === 1, { method: it.cleanMethod, reason: it.cleanReason, adobeCalls });
+  t_("Başarısızlık hatırlandı: sonraki SFX'ler doğrudan İçerik Duyarlı", !!P._adobeFail && store.settings.adobe.last && store.settings.adobe.last.ok === false && P.sfxMethod() === "contentAware", { next: P.sfxMethod() });
   const L = it.cleanLayerId != null && api.findLayer(doc, it.cleanLayerId);
   t_("Temizlik katmanı Temizlik grubunda", !!L && L.parent && L.parent.id === s.state.groups.clean);
   // SFX harflerinin yerinde lacivert mürekkep kaldı mı + maske dışı değişti mi

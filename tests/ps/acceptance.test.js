@@ -1,5 +1,5 @@
 // KREDİ HARCAMAMAK İÇİN: Adobe Üretken Dolgu çağrısı testlerde daima sahte
-R("../src/ps/adobe").replay = async () => { throw new Error("test: Üretken Dolgu kullanılamıyor"); };
+R("../src/ps/adobe").generativeFill = async () => { throw new Error("test: Üretken Dolgu kullanılamıyor"); }; // kredi koruması
 // Gerçek Photoshop üzerinde kabul testleri (ağ gerektirmeyen kısım).
 // tests/build-psjs.ps1 ile src/ modülleriyle birlikte paketlenir. R(...) = paket içi require.
 const fs = require("fs");

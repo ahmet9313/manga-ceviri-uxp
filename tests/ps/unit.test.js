@@ -117,8 +117,8 @@ R("../src/ps/api").modal("Birim testleri", async () => {
   });
 
   await test("Loglarda anahtar maskeleme", async () => {
-    const s = redact('Authorization: Bearer sk_torii_80n3FabcdefBUfA {"x-byok-google":"AIzaSyABCDEFGHIJKLMNOPQRSTUV"}');
-    assert(!/80n3Fabcdef/.test(s) && !/AIzaSyABCDEFGHIJ/.test(s), s);
+    const s = redact('Authorization: Bearer sk_torii_ZZZZZabcdefQQQQ {"x-byok-google":"AIzaSyABCDEFGHIJKLMNOPQRSTUV"}');
+    assert(!/ZZZZZabcdef/.test(s) && !/AIzaSyABCDEFGHIJ/.test(s), s);
     return s;
   });
 
@@ -126,7 +126,33 @@ R("../src/ps/api").modal("Birim testleri", async () => {
     const { trUpper } = R("../src/ps/text");
     const s = trUpper("Xiao Zheng? İyi misin, şimdi!", "XIAO ZHENG?");
     assert(s === "XIAO ZHENG? İYİ MİSİN, ŞİMDİ!", s);
-    return s;
+    // Kaynakta "in"/"bin" geçse de Türkçe küçük kelime Türkçe kurala girer; Latin dışı harfler de büyür
+    const s2 = trUpper("Aşağı in, bin lira ver! Ñandú", "GET IN, I'LL BIN IT");
+    assert(s2 === "AŞAĞI İN, BİN LİRA VER! ÑANDÚ", s2);
+    return s + " | " + s2;
+  });
+
+  await test("Balon tespiti: paneller arası boşluk balon DEĞİL, düz SFX harfi balon DEĞİL, kesik balon VAR", async () => {
+    const { detectBubble } = R("../src/model/classify");
+    const W = 800, H = 1200, data = new Uint8Array(W * H * 3).fill(255);
+    const rect = (l, t, r, b, v) => { for (let y = t; y < b; y++) for (let x = l; x < r; x++) { const i = (y * W + x) * 3; data[i] = data[i + 1] = data[i + 2] = v; } };
+    rect(0, 0, W, 300, 90); rect(0, 700, W, H, 90); // iki tam genişlik panel, arada beyaz boşluk (300-700)
+    const img = { data, width: W, height: H, bounds: { left: 0, top: 0 } }, page = { W, H };
+    const gap = detectBubble(img, { box: { cx: 400, cy: 500, w: 300, h: 60 } }, page);
+    assert(gap === null, "boşluk balon sayıldı: " + JSON.stringify(gap && gap.rect));
+    // Panelde siyah konturlu oval balon, sol sayfa kenarından kesik
+    for (let y = 760; y < 1000; y++) for (let x = 0; x < 400; x++) { const d = ((x - 120) / 260) ** 2 + ((y - 880) / 110) ** 2; const i = (y * W + x) * 3; const v = d < 0.92 ? 255 : d < 1.05 ? 0 : 90; data[i] = data[i + 1] = data[i + 2] = v; }
+    const cut = detectBubble(img, { box: { cx: 120, cy: 880, w: 180, h: 60 } }, page);
+    assert(cut && cut.rect.left === 0 && !cut.rectangular, "kesik balon bulunamadı: " + JSON.stringify(cut));
+    // Düz kırmızı SFX harfi (içi dolu) panelde: kendi içi balon sayılmamalı
+    for (let y = 100; y < 220; y++) for (let x = 500; x < 560; x++) { const i = (y * W + x) * 3; data[i] = 220; data[i + 1] = 30; data[i + 2] = 30; }
+    const sfx = detectBubble(img, { box: { cx: 530, cy: 160, w: 60, h: 120 } }, page);
+    assert(sfx === null, "SFX harfi balon sayıldı");
+    // Kırpılmış görüntü: kırpma kenarı sayfa kenarı değildir
+    const crop = { data, width: W, height: H, bounds: { left: 0, top: 0 } };
+    const c2 = detectBubble(crop, { box: { cx: 400, cy: 500, w: 300, h: 60 } }, { W: 2000, H: 5000 });
+    assert(c2 === null, "kırpma kenarı sayfa kenarı sayıldı");
+    return { cut: cut.rect, fill: cut.fill };
   });
 
   await test("Ekran→belge dönüşümü (zoom, DPI)", async () => {

@@ -9,11 +9,12 @@ $out = Join-Path $dist ("manga-ceviri-studio-" + $manifest.version + ".ccx")
 if (Test-Path $out) { Remove-Item $out -Force }
 Add-Type -AssemblyName System.IO.Compression, System.IO.Compression.FileSystem
 $include = @("manifest.json", "index.html", "index.js", "styles.css", "icons", "src")
+# Geliştirici araçları (src/dev) pakete GİRMEZ: yalnızca çalışma zamanı dosyaları
 $zip = [System.IO.Compression.ZipFile]::Open($out, [System.IO.Compression.ZipArchiveMode]::Create)
 try {
   foreach ($inc in $include) {
     $p = Join-Path $root $inc
-    $files = if (Test-Path $p -PathType Container) { Get-ChildItem $p -Recurse -File } else { Get-Item $p }
+    $files = if (Test-Path $p -PathType Container) { Get-ChildItem $p -Recurse -File | Where-Object { $_.FullName -notlike "*\src\dev\*" } } else { Get-Item $p }
     foreach ($f in $files) {
       $rel = $f.FullName.Substring($root.Length + 1).Replace('\', '/')   # ZIP girişleri '/' ile
       [void][System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zip, $f.FullName, $rel, [System.IO.Compression.CompressionLevel]::Optimal)

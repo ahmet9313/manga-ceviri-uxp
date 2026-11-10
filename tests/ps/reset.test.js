@@ -1,5 +1,5 @@
 // KREDİ HARCAMAMAK İÇİN: Adobe Üretken Dolgu çağrısı testlerde daima sahte
-R("../src/ps/adobe").replay = async () => { throw new Error("test: Üretken Dolgu kullanılamıyor"); };
+R("../src/ps/adobe").generativeFill = async () => { throw new Error("test: Üretken Dolgu kullanılamıyor"); }; // kredi koruması
 // Öğe silme (listeden / katmanlarıyla) ve Tam İşlem için sayfa sıfırlama.
 const fs = require("fs");
 const { app } = require("photoshop");
@@ -59,10 +59,12 @@ api.modal("Silme testi", async () => {
   await P._typesetPage(t, "page", {});
   s.state.items[0].locks.text = true; // D kilitli
   const locked = s.state.items[0], other = s.state.items[1];
-  P.respCache = { [t.docUid + "|800x10000|x"]: { text: [] } };
+  let paid = 0; const key = "ocr|test";
+  await P.withPaidRequest("OCR", async () => { paid++; return [1]; }, key); // ücretli yanıt önbelleğe yazıldı
   const n1 = await P.resetPage(t, true);
   t_("Sıfırla (kilitliler korunsun): yalnız kilitsiz öğe ve katmanı silindi", n1 === 1 && s.state.items.length === 1 && s.state.items[0] === locked && !all().includes(other.layerId) && all().includes(locked.layerId));
-  t_("Sıfırlama önceki Torii yanıtını unutuyor (yeniden ücretli istek atılır)", Object.keys(P.respCache).length === 0);
+  const again = await P.withPaidRequest("OCR", async () => { paid++; return [2]; }, key);
+  t_("Kural 3: sıfırlamadan sonra aynı istek önbellekten gelir (ikinci kez kredi ödenmez)", paid === 1 && again[0] === 1, { paid });
   const n2 = await P.resetPage(t, false);
   t_("Sıfırla (her şey): tüm öğeler ve eklenti katmanları silindi", s.state.items.length === 0 && !all().includes(locked.layerId), { n2 });
   const g = s.state.groups;
