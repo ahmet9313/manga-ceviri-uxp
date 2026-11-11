@@ -2,7 +2,7 @@
   "manifestVersion": 5,
   "id": "com.mangaceviri.studio",
   "name": "Manga Çeviri Stüdyosu",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "main": "index.html",
   "host": [
     {
