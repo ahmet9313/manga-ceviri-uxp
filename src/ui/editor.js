@@ -189,9 +189,17 @@ class Editor {
     if (e.button !== undefined && e.button !== 0) return;
     e.preventDefault();
     const x0 = e.clientX, y0 = e.clientY;
+    // Oturum hazırlanırken (Photoshop okuması) düğme bırakılırsa: bırakma olayı kaçar ve Photoshop, bir sonraki tıklamaya
+    // kadar modal durumda (kilitli) kalırdı → erken bırakmayı yakala, oturumu hemen iptal et.
+    let released = false;
+    const early = () => { released = true; };
+    document.addEventListener("pointerup", early); document.addEventListener("pointercancel", early);
+    const offEarly = () => { document.removeEventListener("pointerup", early); document.removeEventListener("pointercancel", early); };
     let session;
     try { session = await this.app.ops.beginDrag(itemId, kind); }
-    catch (err) { this.app.notify(err.message, "error"); return; }
+    catch (err) { offEarly(); this.app.notify(err.message, "error"); return; }
+    offEarly();
+    if (released) { try { await session.cancel(); } catch (err) { /* yok */ } return; }
     el.classList.add("active");
     let ended = false;
     const move = (ev) => session.update(ev.clientX - x0, ev.clientY - y0);

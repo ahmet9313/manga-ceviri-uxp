@@ -1,5 +1,5 @@
 {
- "started": "2026-11-07T07:31:45.962Z",
+ "started": "2026-11-11T13:27:52.295Z",
  "ps": {
   "uxp": {}
  },
@@ -7,7 +7,7 @@
   {
    "name": "1. Belge yapısı: Orijinal/Temizlik/Çeviri grupları",
    "status": "PASS",
-   "ms": 114,
+   "ms": 147,
    "detail": {
     "order": [
      "Çeviri",
@@ -22,7 +22,7 @@
   {
    "name": "2. Bölge analizi + otomatik yöntem seçimi (düz balon / tram / çizim üstü SFX)",
    "status": "PASS",
-   "ms": 1027,
+   "ms": 1303,
    "detail": [
     {
      "order": 1,
@@ -117,7 +117,7 @@
   {
    "name": "3. Sadece Balonlar: SFX/diğer pikseller birebir korunur (yerel temizlik + dizgi)",
    "status": "PASS",
-   "ms": 3214,
+   "ms": 3780,
    "detail": {
     "sfxPixelsChecked": 159600,
     "changed": 0,
@@ -128,15 +128,15 @@
      16
     ],
     "notes": [
-     "ok: Temizlik tamam. #1: Yerel düz dolgu (kredisiz), #2: Yerel düz dolgu (kredisiz), #3: Yerel düz dolgu (kredisiz), #5: Yerel düz dolgu (kredisiz)",
-     "warn: Dizgi tamam: 4 katman. Uyarılar: #3: kontur/gölge uygulanamadı (set: acceptance.psjs: Ayarla: komutu şu an kullanılabilir değil. (-25920))"
+     "ok: Temizlik: 4 öğe temizlendi (4 × Yerel düz dolgu (kredisiz)).",
+     "warn: Dizgi: 4/4 katman. Uyarılar: Kurulu çizgi roman fontu yok → Arial kullanıldı. Öneri: ücretsiz \"Comic Neue\" veya \"Bangers\" (Google Fonts) ya da \"Anime Ace\" (Blambot) kurup Photoshop'u yeniden başlatın | #3: kontur/gölge uygulanamadı (set: acceptance.psjs: Ayarla: komutu şu an kullanılabilir değil. (-25920))"
     ]
    }
   },
   {
    "name": "4. Temizlik: maske dışı pikseller değişmez, maske içi değişir (ayrı katman + katman maskesi)",
    "status": "PASS",
-   "ms": 198,
+   "ms": 185,
    "detail": {
     "outsideChanged": 0,
     "insideChanged": 18835,
@@ -147,7 +147,7 @@
   {
    "name": "5. Tekrar çalıştırma: aynı öğeden ikinci katman oluşmaz",
    "status": "PASS",
-   "ms": 6151,
+   "ms": 8207,
    "detail": {
     "before": {
      "trans": 5,
@@ -162,17 +162,17 @@
   {
    "name": "6. Dizgi: düzenlenebilir metin katmanları, kutu konumu, balona sığdırma, Türkçe karakterler",
    "status": "PASS",
-   "ms": 86,
+   "ms": 98,
    "detail": [
     {
      "order": 1,
      "contents": "Xiaofei, ben önden çıkıyorum. Acele et, tamam mı?",
      "font": "ArialMT",
-     "sizePx": 31,
+     "sizePx": 30.5,
      "isBox": true,
      "box": [
       225,
-      177
+      175
      ],
      "centerDist": 0,
      "overflow": false,
@@ -214,7 +214,7 @@
      "isBox": true,
      "box": [
       293,
-      241
+      243
      ],
      "centerDist": 44,
      "overflow": false,
@@ -239,12 +239,12 @@
   {
    "name": "7. Kurallar: bağırma ve SFX kuralı + uygulanan kural kaynağı",
    "status": "PASS",
-   "ms": 11,
+   "ms": 15,
    "detail": {
     "font": "Impact",
     "source": {
-     "level": "series",
-     "label": "Seri: Seri A",
+     "level": "settings",
+     "label": "Ayarlar",
      "rule": "Bağırma A"
     },
     "strokeApplied": false,
@@ -252,11 +252,11 @@
    }
   },
   {
-   "name": "8. Aynı sayfaya iki seri profili: doğru fontlar",
+   "name": "8. Ayarlar stili değişince dizgi doğru fontları uygular (A → B → A)",
    "status": "PASS",
-   "ms": 7324,
+   "ms": 9147,
    "detail": {
-    "profileB": {
+    "styleB": {
      "#1/dialog/normal": "TimesNewRomanPSMT",
      "#2/dialog/normal": "TimesNewRomanPSMT",
      "#3/dialog/shout": "Georgia-Bold",
@@ -269,7 +269,7 @@
   {
    "name": "9. Elle düzenleme korunur: Photoshop'ta font/metin değişikliği → toplu dizgi ezmez",
    "status": "PASS",
-   "ms": 2253,
+   "ms": 3810,
    "detail": {
     "contents": "Elle düzeltilmiş metin: ĞÜŞİÖÇ",
     "font": "TimesNewRomanPSMT",
@@ -281,7 +281,7 @@
   {
    "name": "10. Karakter bazlı biçim: tek alan değişince diğer aralıklar korunur",
    "status": "PASS",
-   "ms": 156,
+   "ms": 170,
    "detail": {
     "ranges": 2,
     "redRanges": 1,
@@ -292,7 +292,7 @@
   {
    "name": "11. Kutu boyutlandırma ≠ katman ölçekleme",
    "status": "PASS",
-   "ms": 8063,
+   "ms": 6815,
    "detail": {
     "before": [
      117,
@@ -321,7 +321,7 @@
   {
    "name": "12. Sürükleme oturumu: tek geçmiş adımı; iptal → başlangıç konumu",
    "status": "PASS",
-   "ms": 21788,
+   "ms": 17999,
    "detail": {
     "historyDelta": 1,
     "moved": [
@@ -333,30 +333,40 @@
    }
   },
   {
+   "name": "12b. Panelden çeviri değişince konum kilitlenmez; yeni metin balona yeniden sığdırılır",
+   "status": "PASS",
+   "ms": 3580,
+   "detail": {
+    "sizeBefore": 40,
+    "sizeAfter": 31,
+    "locked": false
+   }
+  },
+  {
    "name": "13. Undo/Redo: elle düzenlenen metin korunur, panel eşitlenir",
    "status": "PASS",
-   "ms": 144,
+   "ms": 153,
    "detail": {
     "lastSteps": [
-     "kutu",
-     "ölçek",
      "geri",
-     "#5 taşı"
+     "#5 taşı",
+     "#3 metin",
+     "Dizgi (5 öğe)"
     ],
-    "typesetStepIndex": 12,
+    "typesetStepIndex": 20,
     "contents": "Elle düzeltilmiş metin: ĞÜŞİÖÇ"
    }
   },
   {
    "name": "14. PSD kaydet → kapat → aç: eşleşmeler, kilitler, manuel değerler geri gelir",
    "status": "PASS",
-   "ms": 5381,
+   "ms": 7818,
    "detail": {
     "items": 5,
     "locks": {
      "text": false,
      "style": true,
-     "position": true
+     "position": false
     },
     "manual": {
      "font": "TimesNewRomanPSMT"
@@ -368,7 +378,7 @@
   {
    "name": "15. Belge güvenliği: iş sırasında belge değişirse sonuç yanlış belgeye yazılmaz",
    "status": "PASS",
-   "ms": 798,
+   "ms": 543,
    "detail": {
     "deferred": true,
     "otherDocUntouched": 1,
@@ -378,7 +388,7 @@
   {
    "name": "16. Türkçe glif testi (Glif Koruması ile)",
    "status": "PASS",
-   "ms": 2951,
+   "ms": 2891,
    "detail": {
     "arial": [],
     "Webdings": [
@@ -394,14 +404,14 @@
   {
    "name": "17. â/Â → a/A seçeneği diğer Türkçe harfleri korur",
    "status": "PASS",
-   "ms": 0,
+   "ms": 1,
    "detail": "Hala kağıt ALEM ğüşıöç İ…"
   }
  ],
  "notes": [],
  "stage": "test1: modal",
  "doc": {
-  "id": 353,
+  "id": 415,
   "w": 800,
   "h": 10000,
   "res": 72
@@ -427,10 +437,10 @@
   "method": "torii",
   "reason": "Tramlı zemin (periyot 6 px, düzenlilik %100): desen sürekliliği için Torii Inpaint (0,02 kredi)."
  },
- "reopenedDocId": 381,
- "finished": "2026-11-07T07:32:49.339Z",
+ "reopenedDocId": 445,
+ "finished": "2026-11-11T13:29:02.951Z",
  "summary": {
-  "pass": 17,
+  "pass": 18,
   "fail": 0
  }
 }

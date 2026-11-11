@@ -360,6 +360,18 @@ api.modal("Kabul testleri", async () => {
     return { historyDelta: h1 - h0, moved: [Math.round(b1.left - b0.left), Math.round(b1.top - b0.top)], cancelRestored: true, lastHistory: doc.historyStates[doc.historyStates.length - 1].name };
   });
 
+  await test("12b. Panelden çeviri değişince konum kilitlenmez; yeni metin balona yeniden sığdırılır", async () => {
+    const it = sess.state.items[2];
+    assert(it.layerId != null && !it.locks.position, "ön koşul: dizilmiş, kilitsiz öğe");
+    const before = await text.readTextLayer(docId, it.layerId);
+    await ops.setTranslation(it.id, "AMA DAHA DA, DAHA DA, DAHA DA YAKLAŞIYORSUN! NE YAPTIĞINI SANIYORSUN SEN BÖYLE, HEMEN GERİ ÇEKİL!");
+    await pipeline._typesetPage(t(), "page", {});
+    const after = await text.readTextLayer(docId, it.layerId);
+    assert(!it.locks.position, "metin değişimi 'kullanıcı taşıdı' sayılıp konumu kilitlememeli");
+    assert(after.sizePx < before.sizePx - 1 && !it.overflow, `uzun metin yeniden sığdırılmalı: ${before.sizePx} → ${after.sizePx} px, taşma ${it.overflow}`);
+    return { sizeBefore: before.sizePx, sizeAfter: after.sizePx, locked: it.locks.position };
+  });
+
   await test("13. Undo/Redo: elle düzenlenen metin korunur, panel eşitlenir", async () => {
     const it = sess.state.items[1];
     const hist = doc.historyStates;

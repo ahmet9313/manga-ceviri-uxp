@@ -79,19 +79,31 @@ async function readXmp(docId) {
   return (r[0] && r[0].XMPMetadataAsUTF8) || "";
 }
 
-const STATE_RE = /<rdf:Description[^>]*xmlns:mct="http:\/\/ns\.mangaceviri\.local\/1\.0\/"[^>]*>[\s\S]*?<\/rdf:Description>\s*/g;
+// Yalnız bizim alanımızı taşıyan blok (ilk yazımda ürettiğimiz biçim)
+const OWN_BLOCK_RE = /<rdf:Description\s+rdf:about=""\s+xmlns:mct="http:\/\/ns\.mangaceviri\.local\/1\.0\/"\s*>\s*<mct:state>[^<]*<\/mct:state>\s*<\/rdf:Description>\s*/g;
 
-/** PSD içine eklenti durumunu yazar (base64 JSON). Doğrulama için geri okur. */
+/**
+ * XMP'den YALNIZCA eklentinin durum alanını çıkarır. Photoshop, yazdığımız bloğu belgenin diğer meta verileriyle TEK
+ * rdf:Description'da birleştirir; bloğun tamamını silmek kullanıcının Dosya Bilgisi alanlarını (yazar, telif, açıklama…)
+ * da silerdi (PS 27.11'de doğrulandı: tests/ps/xmpmerge.test.js).
+ */
+function stripState(xmp) {
+  return xmp
+    .replace(OWN_BLOCK_RE, "")
+    .replace(/[ \t]*<mct:state>[^<]*<\/mct:state>[ \t]*\r?\n?/g, "")
+    .replace(/\s+mct:state="[^"]*"/g, "");
+}
+
+/** PSD içine eklenti durumunu yazar (base64 JSON). Belgenin diğer meta verilerine dokunmaz. */
 async function writeState(docId, state) {
   const json = JSON.stringify(state);
   const b64 = base64Encode(utf8Encode(json));
   let xmp = await readXmp(docId);
   const block = `<rdf:Description rdf:about="" xmlns:mct="${XMP_NS}"><mct:state>${b64}</mct:state></rdf:Description>`;
-  if (!xmp) {
+  if (!xmp || xmp.indexOf("</rdf:RDF>") < 0) {
     xmp = `<?xpacket begin="﻿" id="W5M0MpCehiHzreSzNTczkc9d"?><x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">${block}</rdf:RDF></x:xmpmeta><?xpacket end="w"?>`;
   } else {
-    xmp = xmp.replace(STATE_RE, "");
-    xmp = xmp.replace("</rdf:RDF>", block + "</rdf:RDF>");
+    xmp = stripState(xmp).replace("</rdf:RDF>", () => block + "</rdf:RDF>");
   }
   await bp({ _obj: "set", _target: [{ _ref: "property", _property: "XMPMetadataAsUTF8" }, { _ref: "document", _id: docId }], to: { _obj: "document", XMPMetadataAsUTF8: xmp } });
   return b64.length;
@@ -99,9 +111,9 @@ async function writeState(docId, state) {
 
 async function readState(docId) {
   const xmp = await readXmp(docId);
-  const m = /<mct:state>([A-Za-z0-9+/=\s]+)<\/mct:state>/.exec(xmp);
+  const m = /<mct:state>([A-Za-z0-9+/=\s]+)<\/mct:state>/.exec(xmp) || /\smct:state="([A-Za-z0-9+/=\s]+)"/.exec(xmp);
   if (!m) return null;
   try { return JSON.parse(utf8Decode(base64Decode(m[1]))); } catch (e) { return null; }
 }
 
-module.exports = { GROUP_NAMES, ensureStructure, makeGroup, makePixelLayerIn, deleteLayer, renameLayer, readState, writeState, readXmp };
+module.exports = { GROUP_NAMES, ensureStructure, makeGroup, makePixelLayerIn, deleteLayer, renameLayer, readState, writeState, readXmp, stripState };

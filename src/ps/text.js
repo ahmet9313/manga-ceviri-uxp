@@ -21,6 +21,12 @@ function trUpper(s, source) {
   const isName = (w) => /^[A-Z][a-z]+$/.test(w) && keep.has(w.toLowerCase());
   return String(s).replace(/[^\s0-9.,!?…;:'"“”‘’«»()[\]{}\-–—/\\*~]+/g, (w) => isName(w) ? w.toUpperCase() : w.replace(/i/g, "İ").replace(/ı/g, "I").toUpperCase());
 }
+/** Katmandaki metin, panelin bu çeviri için yazacağı metinle aynı mı? (olduğu gibi ya da Türkçe BÜYÜK HARF hali) */
+function matchesTranslation(layerContents, translation, source) {
+  const norm = (s) => String(s == null ? "" : s).replace(/\r\n?/g, "\n");
+  const a = norm(layerContents), b = norm(translation);
+  return a === b || a === trUpper(b, source);
+}
 function toPsText(s) { return String(s == null ? "" : s).replace(/\r\n|\n/g, "\r"); }
 function fromPsText(s) { return String(s == null ? "" : s).replace(/\r/g, "\n"); }
 
@@ -199,6 +205,17 @@ async function rotateTo(docId, layerId, angle) {
 
 function center(b) { return [(b.left + b.right) / 2, (b.top + b.bottom) / 2]; }
 
+/**
+ * Katmanın güncel (efektsiz) sınırı → { bounds } ; katman yoksa {}. Panel katmanı değiştirdikten sonra
+ * item.lastApplied'a eklenir: eski sınır kalırsa sonraki dizgi bunu "kullanıcı taşıdı" sanıp konumu kilitler.
+ */
+function layerBounds(docId, layerId) {
+  try {
+    const L = findLayer(getDoc(docId), layerId), b = L && L.boundsNoEffects;
+    return b ? { bounds: { left: b.left, top: b.top, right: b.right, bottom: b.bottom } } : {};
+  } catch (e) { return {}; }
+}
+
 async function moveCenterTo(docId, layerId, cx, cy) {
   const layer = findLayer(getDoc(docId), layerId);
   const [x, y] = center(layer.boundsNoEffects);
@@ -352,7 +369,7 @@ async function readStrokeShadow(docId, layerId) {
 }
 
 module.exports = {
-  trUpper, toPsText, fromPsText, pxToPt, ptToPx,
+  trUpper, matchesTranslation, layerBounds, toPsText, fromPsText, pxToPt, ptToPx,
   createTextLayer, readTextLayer, setContents, applyStyle, rmwTextKey, resizeBox, ensureParagraph, setWarp,
   scaleLayer, rotateTo, moveCenterTo, translateBy, fitToBox, getEffects, setStrokeShadow, readStrokeShadow,
 };

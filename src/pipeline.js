@@ -67,6 +67,7 @@ class Pipeline {
     this.store.addPending({ docUid: t.docUid, title: t.title, label, apply: async () => {
       const again = this.verifyTargetByUid(t);
       if (!again.ok) throw new TargetChangedError("Hedef belge uygun değil.");
+      t.docId = again.session.docId; // belge kapatılıp yeniden açıldıysa Photoshop kimliği değişmiştir; yazma adımı güncel kimliği kullanmalı
       return fn(again.session);
     } });
     this.hooks.notify(`"${t.title}" etkin değil veya kapalı. "${label}" sonucu bekletiliyor; belgeye dönünce uygulanacak.`, "warn");
@@ -221,8 +222,9 @@ class Pipeline {
       if (!sb) throw new Error("Seçili bölge yok. Eksik balonu Photoshop'ta seçip tekrar deneyin.");
       area = geom.rectInflate(sb, 4, area);
       // OCR en az 50×50 ister
-      if (area.right - area.left < 50) { const c = (area.left + area.right) / 2; area.left = Math.max(0, Math.floor(c - 25)); area.right = Math.min(t.w, area.left + 50); }
-      if (area.bottom - area.top < 50) { const c = (area.top + area.bottom) / 2; area.top = Math.max(0, Math.floor(c - 25)); area.bottom = Math.min(t.h, area.top + 50); }
+      // (sayfanın sağ/alt kenarındaki küçük seçimde de 50 px korunur: pencere içeri kaydırılır)
+      if (area.right - area.left < 50) { const c = (area.left + area.right) / 2; area.left = Math.max(0, Math.min(t.w - 50, Math.floor(c - 25))); area.right = Math.min(t.w, area.left + 50); }
+      if (area.bottom - area.top < 50) { const c = (area.top + area.bottom) / 2; area.top = Math.max(0, Math.min(t.h - 50, Math.floor(c - 25))); area.bottom = Math.min(t.h, area.top + 50); }
       selMask = await modal("Seçimi oku", () => pixels.selectionMask(t.docId, area), {});
     }
     this.progress("Görüntü okunuyor…", 0.1);
@@ -357,14 +359,17 @@ class Pipeline {
       byok: await this.byok(),
     };
     this.progress(`Çeviri (${todo.length} metin)…`, 0.4);
-    const j = await this.withPaidRequest("Çeviri", () => this.client.translateTexts(todo.map((i) => i.source), req),
-      "tr|" + JSON.stringify([todo.map((i) => i.source), Object.assign({}, req, { byok: req.byok ? req.byok.provider : null })]));
+    const cacheKey = "tr|" + JSON.stringify([todo.map((i) => i.source), Object.assign({}, req, { byok: req.byok ? req.byok.provider : null })]);
+    // "Yeniden çevir": kullanıcı YENİ bir çeviri istiyor → önbellekteki aynı yanıt geri verilmez
+    if (opts.forceEvenLocked && this.paidCache) this.paidCache.delete(cacheKey);
+    const j = await this.withPaidRequest("Çeviri", () => this.client.translateTexts(todo.map((i) => i.source), req), cacheKey);
     return this.applyOrDefer(t, "Çeviri sonuçları", async (sess) => {
       // Sabit kimliklerle eşle: gönderim sırası = yanıt sırası
       todo.forEach((it, k) => {
         const live = sess.state.items.find((x) => x.id === it.id);
         if (!live || live.locks.text) return;
         live.translation = conf.applyTurkishFixes(j.text[k], prof.turkish);
+        live.translationEdited = false; // yeni çeviri geldi: "elle düzenlendi" işareti kalkar (yoksa öğe toplu çeviriden kalıcı dışlanırdı)
         live.status.translated = true;
         live.translatedAt = Date.now();
       });
@@ -399,11 +404,14 @@ class Pipeline {
     let items = opts.objectRemoval ? [] : (await this.scopeItems(scope, t)).filter((i) => this.filtersAllow(i));
     if (opts.itemIds) items = s.state.items.filter((i) => opts.itemIds.includes(i.id));
     if (!opts.force) items = items.filter((i) => !i.status.cleaned);
-    // Elle düzeltilmiş maske: seçili bölge kapsamında Photoshop seçimi maske olarak kullanılır
+    // Elle düzeltilmiş maske: YALNIZCA açıkça istenince ("Seçimle düzelt", "Nesne kaldır") Photoshop seçimi maske olur.
+    // "Bölge" kapsamı tek başına yalnızca seçimle kesişen öğeleri süzer; yoksa balonu çevreleyen kaba bir seçim
+    // tümüyle maskeye girip balon konturunu ve çizimi de silerdi.
     let manualSel = null;
-    if (scope === "region" || opts.useSelectionMask) {
+    if (opts.useSelectionMask) {
       const sb = await pixels.selectionBounds(t.docId);
-      if (sb) manualSel = await modal("Seçimi oku", () => pixels.selectionMask(t.docId, geom.rectInflate(sb, 0, docRect)), {});
+      if (!sb) throw new Error("Photoshop'ta seçim yok. Önce temizlenecek alanı seçin.");
+      manualSel = await modal("Seçimi oku", () => pixels.selectionMask(t.docId, geom.rectInflate(sb, 0, docRect)), {});
     }
     if (!items.length && !manualSel) { this.hooks.notify("Temizlenecek öğe yok.", "info"); return null; }
     const plan = [];
@@ -874,7 +882,9 @@ class Pipeline {
     let curBefore = null;
     if (it.layerId != null && findLayer(doc, it.layerId)) {
       curBefore = await text.readTextLayer(t.docId, it.layerId);
-      if (curBefore && !curBefore.notText) this.captureManualEdits(it, curBefore);
+      // Rasterleştirilmiş SFX (metin olmayan katman): dokunulmaz — metin işlemleri hata verirdi
+      if (curBefore && curBefore.notText) { it.status.typeset = true; return; }
+      if (curBefore) this.captureManualEdits(it, curBefore);
     }
     const r = this.resolveFor(sess.state, it);
     if (r.warnings) warnings.push(...r.warnings.map((w) => `#${it.order}: ${w}`));
@@ -887,7 +897,9 @@ class Pipeline {
       it.layerId = lid;
       await tm("effects", () => this.applyEffects(t, lid, st, warnings, it, true));
       if (st.warpStyle && st.warpStyle !== "warpNone") await text.setWarp(t.docId, lid, st.warpStyle, st.warpBend);
-      if (st.fit) await tm("fit", () => this.fitItem(t, it, st, box));
+      // Elle punto verilmişse sığdırma onu ezmez (var olan katmandaki davranışla aynı); yazı kutunun ortasına alınır
+      if (st.fit && !it.manual.sizePx) await tm("fit", () => this.fitItem(t, it, st, box));
+      else if (it.manual.sizePx) await text.moveCenterTo(t.docId, lid, box.cx, box.cy);
     } else {
       const cur = curBefore || (await text.readTextLayer(t.docId, it.layerId));
       const desired = st.uppercase ? text.trUpper(it.translation, it.source) : it.translation;
@@ -932,14 +944,19 @@ class Pipeline {
   captureManualEdits(it, cur) {
     const la = it.lastApplied;
     if (!la || !cur) return;
+    let styleChanged = false;
     for (const f of ["font", "color", "tracking", "align", "fauxBold", "fauxItalic", "leadingPct"]) {
-      if (la[f] !== undefined && cur[f] !== la[f]) { it.manual[f] = cur[f]; }
+      if (la[f] !== undefined && cur[f] !== la[f]) { it.manual[f] = cur[f]; styleChanged = true; }
     }
-    if (la.sizePx && Math.abs((cur.sizePx || 0) - la.sizePx) > 0.6) it.manual.sizePx = cur.sizePx;
-    if (la.contents !== undefined && cur.contents !== la.contents && !it.locks.text) {
+    if (la.sizePx && Math.abs((cur.sizePx || 0) - la.sizePx) > 0.6) { it.manual.sizePx = cur.sizePx; styleChanged = true; }
+    const textChanged = la.contents !== undefined && cur.contents !== la.contents;
+    // Katmandaki metin panelin zaten yazacağı metinse (ör. BÜYÜK HARF kuralıyla çevrilmiş hali) elle düzenleme sayılmaz
+    if (textChanged && !it.locks.text && !text.matchesTranslation(cur.contents, it.translation, it.source)) {
       it.translation = cur.contents; it.translationEdited = true;
     }
-    if (la.bounds && cur.bounds && (Math.abs(la.bounds.left - cur.bounds.left) > 1 || Math.abs(la.bounds.top - cur.bounds.top) > 1)) {
+    // Konum kilidi yalnızca yazı ve biçim AYNIYKEN sınır kaydıysa: metin/punto/font değişince mürekkep sınırı kendiliğinden
+    // değişir; bu "kullanıcı taşıdı" demek değildir (yoksa öğe gereksiz kilitlenir ve yeni metin balona sığdırılmaz).
+    if (!textChanged && !styleChanged && la.bounds && cur.bounds && (Math.abs(la.bounds.left - cur.bounds.left) > 1 || Math.abs(la.bounds.top - cur.bounds.top) > 1)) {
       it.locks.position = true; // kullanıcı tuvalde taşıdı → konum korunur
     }
   }
@@ -1055,7 +1072,7 @@ class Pipeline {
       this.store.touch(sess.docId, { reason: "full", noPersist: true });
       return merged;
     });
-    if (result) await this._typesetPage(this.captureTarget(), "page", {});
+    if (result) await this._typesetPage(t, "page", {}); // aynı hedef: o an etkin olan başka bir belgeye dizilmez
     const sNow = this.store.session(t.docId), elig = sNow ? sNow.state.items.filter((i) => this.filtersAllow(i)) : [];
     const notClean = elig.filter((i) => !i.status.cleaned).length, notSet = elig.filter((i) => !i.status.typeset).length;
     const cr = j.metadata && j.metadata.credits_used != null ? ", " + j.metadata.credits_used + " kredi" : "";
@@ -1241,7 +1258,8 @@ class Pipeline {
         const field = opts.field === "source" ? it.source : it.translation;
         if (!field || !re.test(field)) continue;
         re.lastIndex = 0;
-        out.push({ docUid: p.docUid, title: p.title, open: !!sess, itemId: it.id, order: it.order, before: field, after: field.replace(re, replacement), locked: !!(it.locks && it.locks.text) });
+        // Düz metin aramasında "Değiştir" alanındaki $ işaretleri ($&, $1…) özel anlam taşımaz
+        out.push({ docUid: p.docUid, title: p.title, open: !!sess, itemId: it.id, order: it.order, before: field, after: opts.regex ? field.replace(re, replacement) : field.replace(re, () => replacement), locked: !!(it.locks && it.locks.text) });
         re.lastIndex = 0;
       }
     }
@@ -1267,7 +1285,7 @@ class Pipeline {
             if (it.layerId != null && findLayer(getDoc(docId), it.layerId)) {
               const st = this.resolveFor(sess.state, it).style;
               await text.setContents(docId, it.layerId, it.translation, st.uppercase, it.source);
-              it.lastApplied = Object.assign({}, it.lastApplied, { contents: st.uppercase ? text.trUpper(it.translation, it.source) : it.translation });
+              it.lastApplied = Object.assign({}, it.lastApplied, { contents: st.uppercase ? text.trUpper(it.translation, it.source) : it.translation }, text.layerBounds(docId, it.layerId));
             }
           }
           n++;

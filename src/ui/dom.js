@@ -80,7 +80,17 @@ function select(options, value, onChange, attrs) {
 
 function numberInput(value, onCommit, attrs) {
   const el = h("input", Object.assign({ type: "number", value: value == null ? "" : value }, attrs || {}));
-  const commit = () => onCommit(el.value === "" ? null : Number(el.value));
+  // min/max yalnızca görsel değil: sınır dışı (ör. 0 veya eksi punto) değerler sınıra çekilir
+  const commit = () => {
+    if (el.value === "") return onCommit(null);
+    let n = Number(el.value);
+    if (isNaN(n)) return;
+    const lo = attrs && attrs.min, hi = attrs && attrs.max;
+    if (lo != null && n < lo) n = lo;
+    if (hi != null && n > hi) n = hi;
+    if (String(n) !== el.value) el.value = n;
+    onCommit(n);
+  };
   el.addEventListener("change", commit);
   el.addEventListener("keydown", (e) => { if (e.key === "Enter") commit(); });
   return el;

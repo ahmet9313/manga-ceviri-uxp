@@ -17,8 +17,17 @@ class Ops {
     return { d, s, docId: d.id };
   }
 
+  /**
+   * Toplu işlem (Tam İşlem, Dizgi, bölüm…) sürüyor mu? Sürerken panelin Photoshop'a yazan işlemleri çalıştırılmaz:
+   * modal() iç içe çağrıyı aynı bağlamda yürüttüğü için işlemin "katmanı seç → etkin katmana uygula" çiftlerinin
+   * arasına girer ve yanlış katmanı değiştirirdi. Photoshop olayları da (işlemin kendi katman seçimleri) yok sayılır.
+   */
+  get busy() { return !!(this.pipeline && this.pipeline.busy); }
+  assertIdle() { if (this.busy) throw new Error(`"${this.pipeline.busyName || "İşlem"}" sürüyor — bitince tekrar deneyin.`); }
+
   /** Panelden öğe seçilince Photoshop'ta katmanı seç. */
   async selectItemLayer(item) {
+    if (this.busy) return false;
     const { d, docId } = this.ctx();
     const id = item.layerId != null && findLayer(d, item.layerId) ? item.layerId : item.cleanLayerId != null && findLayer(d, item.cleanLayerId) ? item.cleanLayerId : null;
     if (id == null) return false;
@@ -29,6 +38,9 @@ class Ops {
 
   /** Photoshop'taki etkin katman(lar)ı panel seçimine yansıt. */
   syncSelectionFromPs() {
+    // İşlem sürerken gelen seçim olayları işlemin kendi katman seçimleridir; panel seçimini değiştirirlerse
+    // "Seçili" kapsamındaki sonraki adımlar (ör. Tam İşlem'de dizgi) yanlış öğelerle çalışır.
+    if (this.busy) return;
     if (this._suppressSelectEvent && Date.now() - this._suppressSelectEvent < 600) return;
     const d = activeDoc();
     if (!d) return;
@@ -42,6 +54,9 @@ class Ops {
 
   /** Metin aracıyla yapılan değişiklikleri ve silinen/geri alınan katmanları panele yansıt. */
   async syncContentFromPs(onlyItemIds) {
+    // İşlem sürerken eşitleme yok: dizgi katmana yeni metni yazmış ama lastApplied'ı henüz güncellememişken
+    // okursak işlemin kendi yazdığı metni "kullanıcı elle değiştirdi" sanarız. İşlem bitince bir kez eşitlenir.
+    if (this.busy) return 0;
     const d = activeDoc();
     if (!d) return 0;
     const s = this.store.session(d.id);
@@ -58,8 +73,11 @@ class Ops {
       try { cur = await text.readTextLayer(d.id, it.layerId); } catch (e) { continue; }
       it.live = cur; // editörde gösterilecek güncel biçim
       const la = it.lastApplied || {};
-      if (la.contents !== undefined && cur.contents !== la.contents && cur.contents !== it.translation) {
-        it.translation = cur.contents; it.translationEdited = true; la.contents = cur.contents; it.lastApplied = la; changed++;
+      if (la.contents !== undefined && cur.contents !== la.contents) {
+        // Metin değişince mürekkep sınırı da değişir: sınır birlikte güncellenir (yoksa sonraki dizgi "taşındı" sanıp kilitler)
+        la.contents = cur.contents; la.bounds = cur.bounds; it.lastApplied = la;
+        // Katmandaki metin panelin yazdığı metinse (olduğu gibi ya da BÜYÜK HARF hali) elle düzenleme değildir
+        if (!text.matchesTranslation(cur.contents, it.translation, it.source)) { it.translation = cur.contents; it.translationEdited = true; changed++; }
       }
     }
     if (changed) this.store.touch(d.id, { reason: "ps-sync" });
@@ -69,6 +87,7 @@ class Ops {
 
   /** Mevcut bir Photoshop metin katmanını öğeyle eşleştir. */
   async linkActiveLayer(itemId) {
+    this.assertIdle();
     const { d, s, docId } = this.ctx();
     const L = d.activeLayers[0];
     if (!L || String(L.kind) !== "text") throw new Error("Önce Photoshop'ta bir METİN katmanı seçin.");
@@ -83,6 +102,7 @@ class Ops {
 
   /** Seçili metin katmanından yeni öğe oluştur (OCR'sız). */
   async itemFromActiveLayer() {
+    this.assertIdle();
     const { d, s, docId } = this.ctx();
     const L = d.activeLayers[0];
     if (!L || String(L.kind) !== "text") throw new Error("Önce bir METİN katmanı seçin.");
@@ -105,11 +125,12 @@ class Ops {
     const { docId } = this.ctx();
     const it = this.store.item(itemId, docId);
     it.translation = value; it.translationEdited = true; it.status.translated = true;
-    if (it.layerId != null && findLayer(getDoc(docId), it.layerId)) {
+    // İşlem sürerken yalnızca panel verisi güncellenir (yazılan metin kaybolmaz); katman bir sonraki dizgide eşitlenir
+    if (!this.busy && it.layerId != null && findLayer(getDoc(docId), it.layerId)) {
       const st = this.pipeline.resolveFor(this.store.session(docId).state, it).style;
       await modal("Metni güncelle", async () => {
         await text.setContents(docId, it.layerId, value, st.uppercase, it.source);
-        it.lastApplied = Object.assign({}, it.lastApplied, { contents: st.uppercase ? text.trUpper(value, it.source) : value });
+        it.lastApplied = Object.assign({}, it.lastApplied, { contents: st.uppercase ? text.trUpper(value, it.source) : value }, text.layerBounds(docId, it.layerId));
       }, { documentID: docId, historyName: `#${it.order} metin` });
     }
     this.store.touch(docId);
@@ -135,6 +156,7 @@ class Ops {
 
   /** Stil alanını manuel değer olarak kaydeder ve katmana uygular (diğer karakter biçimleri korunur). */
   async setStyleField(itemId, field, value) {
+    this.assertIdle();
     const { docId } = this.ctx();
     const it = this.store.item(itemId, docId);
     if (value === null || value === "" || value === undefined) delete it.manual[field]; else it.manual[field] = value;
@@ -155,39 +177,53 @@ class Ops {
 
   /** Metin kutusunu yeniden boyutlandır (yazı ölçeklenmez). */
   async resizeBox(itemId, w, h) {
+    this.assertIdle();
     const { docId } = this.ctx();
     const it = this.store.item(itemId, docId);
     await modal("Kutu boyutu", async () => { await text.ensureParagraph(docId, it.layerId); await text.resizeBox(docId, it.layerId, w, h); }, { documentID: docId, historyName: `#${it.order} kutu boyutu` });
     it.manualBox = Object.assign({}, it.manualBox, { w, h });
+    this.refreshAppliedBounds(it, docId);
     this.store.touch(docId);
+  }
+
+  /** Panel katmanın sınırını değiştirdi: lastApplied'daki sınır güncellenir (sonraki dizgi bunu elle taşıma sanmasın). */
+  refreshAppliedBounds(it, docId) {
+    if (it.lastApplied) Object.assign(it.lastApplied, text.layerBounds(docId, it.layerId));
   }
 
   /** Katmanı ölçekle (dönüşüm) — kutu boyutlandırmadan ayrı. */
   async scaleLayer(itemId, pct) {
+    this.assertIdle();
     const { docId } = this.ctx();
     const it = this.store.item(itemId, docId);
     await modal("Ölçekle", () => text.scaleLayer(docId, it.layerId, pct), { documentID: docId, historyName: `#${it.order} ölçek %${pct}` });
     it.locks.position = true;
+    this.refreshAppliedBounds(it, docId);
     this.store.touch(docId);
   }
 
   async rotateTo(itemId, angle) {
+    this.assertIdle();
     const { docId } = this.ctx();
     const it = this.store.item(itemId, docId);
     await modal("Döndür", () => text.rotateTo(docId, it.layerId, angle), { documentID: docId, historyName: `#${it.order} döndür` });
     it.manualBox = Object.assign({}, it.manualBox, { angle });
+    this.refreshAppliedBounds(it, docId);
     this.store.touch(docId);
   }
 
   async moveTo(itemId, cx, cy) {
+    this.assertIdle();
     const { docId } = this.ctx();
     const it = this.store.item(itemId, docId);
     await modal("Taşı", () => text.moveCenterTo(docId, it.layerId, cx, cy), { documentID: docId, historyName: `#${it.order} konum` });
     it.locks.position = true;
+    this.refreshAppliedBounds(it, docId);
     this.store.touch(docId);
   }
 
   async refit(itemId) {
+    this.assertIdle();
     const { docId, s } = this.ctx();
     const it = this.store.item(itemId, docId);
     const st = this.pipeline.resolveFor(s.state, it).style;
@@ -201,6 +237,7 @@ class Ops {
 
   /** Katman sırasını değiştir (liste sırası ve tuval konumundan bağımsız). */
   async layerOrder(itemId, dir) {
+    this.assertIdle();
     const { docId } = this.ctx();
     const it = this.store.item(itemId, docId);
     await modal("Katman sırası", async () => {
@@ -211,6 +248,7 @@ class Ops {
 
   /** SFX: düzenlenebilir metin kaynağı gizli "SFX Kaynak" grubunda korunur, görünen kopya rasterleştirilir. */
   async rasterizeSfx(itemId) {
+    this.assertIdle();
     const { d, docId, s } = this.ctx();
     const it = this.store.item(itemId, docId);
     if (it.layerId == null || !findLayer(d, it.layerId)) throw new Error("Önce dizgi yapın.");
@@ -246,6 +284,7 @@ class Ops {
 
   /** Birden çok öğeyi siler; alsoLayers → eklentinin oluşturduğu çeviri/temizlik katmanları da (tek geçmiş adımı). */
   async deleteItems(ids, alsoLayers) {
+    this.assertIdle();
     const { d, docId, s } = this.ctx();
     const set = new Set(ids);
     const victims = s.state.items.filter((x) => set.has(x.id));
@@ -266,6 +305,7 @@ class Ops {
   }
 
   async deleteItem(itemId, alsoLayers) {
+    this.assertIdle();
     const { d, docId, s } = this.ctx();
     const it = this.store.item(itemId, docId);
     if (alsoLayers) {
@@ -289,6 +329,7 @@ class Ops {
    * Tüm sürükleme tek modal + suspendHistory içinde: bırakınca TEK adım, Esc/odak kaybı → başlangıca dönüş.
    */
   async beginDrag(itemId, kind) {
+    this.assertIdle();
     const { d, docId } = this.ctx();
     const it = this.store.item(itemId, docId);
     if (it.layerId == null || !findLayer(d, it.layerId)) throw new Error("Bu öğenin metin katmanı yok.");
@@ -338,6 +379,7 @@ class Ops {
           if (kind === "move" || kind === "rotate") it.locks.position = true;
           if (kind === "box") it.manualBox = Object.assign({}, it.manualBox, { w: r.applied.bw, h: r.applied.bh });
           if (kind === "rotate") it.manualBox = Object.assign({}, it.manualBox, { angle: (startInfo.angle || 0) + r.applied.rot });
+          self.refreshAppliedBounds(it, docId);
           self.store.touch(docId);
         }
       },
@@ -362,6 +404,7 @@ class Ops {
   }
 
   async playAction(setName, actionName) {
+    this.assertIdle();
     const set = app.actionTree.find((s) => s.name === setName);
     const a = set && set.actions.find((x) => x.name === actionName);
     if (!a) throw new Error("Eylem bulunamadı");

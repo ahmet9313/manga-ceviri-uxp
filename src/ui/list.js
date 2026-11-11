@@ -134,7 +134,8 @@ class ItemList {
     if (e.key === "ArrowDown" || e.key === "ArrowUp") {
       const dir = e.key === "ArrowDown" ? 1 : -1;
       if (e.altKey && cur >= 0) {
-        if (this.store.reorder(this.store.activeDocId, cur, cur + dir)) { this.markOrderEdited(); this.scrollIntoView(items[cur + dir] ? items[cur].id : null); }
+        // items yerinde değişir: taşınan öğe artık cur + dir konumundadır
+        if (this.store.reorder(this.store.activeDocId, cur, cur + dir)) { this.markOrderEdited(); this.scrollIntoView(items[cur + dir] ? items[cur + dir].id : null); }
       } else {
         const ni = Math.max(0, Math.min(items.length - 1, (cur < 0 ? 0 : cur + dir)));
         this.store.select([items[ni].id]); this.lastClicked = ni; this.cb.onSelect(items[ni]); this.scrollIntoView(items[ni].id);

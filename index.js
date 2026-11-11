@@ -178,6 +178,8 @@ const App = {
       if (info) this.lastRun = { name, ok: info.ok, sec, credits: info.credits, mode: info.mode };
       this.renderModeLine();
       this.scheduleRender();
+      // İşlem sırasında Photoshop eşitlemesi kapalıydı → bitince bir kez eşitle (editördeki canlı değerler)
+      if (this.ops) this.ops.syncContentFromPs().catch(() => {});
     }
   },
 
@@ -465,6 +467,9 @@ const App = {
 
   async onActiveDocChanged() {
     const d = activeDoc();
+    // Eklentinin kendi geçici belgeleri (görsel çözme, glif testi) oturum değildir: açılıp kapanmaları paneli etkilemez
+    if (d && /^(mcs_decode_|MCS_GLYPH_TEST)/.test(String(d.title))) return;
+    const prevActive = this.store.activeDocId;
     // Kapanan belgelerin oturumlarını bırak
     for (const id of [...this.store.sessions.keys()]) if (!getDoc(id)) this.store.detach(id);
     if (!d) { this.store.activeDocId = null; this.renderHeader(); this.list.render(); this.editor.render(); return; }
@@ -481,7 +486,9 @@ const App = {
       log("info", `Belge yüklendi: ${d.title} (${state.items.length} öğe)`);
     }
     this.store.activeDocId = d.id;
-    this.store.selected = new Set();
+    // Seçim yalnızca belge GERÇEKTEN değiştiyse sıfırlanır. Aynı belge için gelen olaylar (ör. işlem sırasında açılıp
+    // kapanan geçici belge) seçimi silerse "Seçili" kapsamındaki sonraki adımlar öğe bulamaz.
+    if (prevActive !== d.id) this.store.selected = new Set();
     // Bu belgeye ait bekleyen sonuçları uygula
     const pend = this.store.takePending(s.state.docUid);
     for (const p of pend) {
@@ -505,10 +512,13 @@ const App = {
     const s = this.store.active;
     if (!s) return;
     const old = s.state.chapterId && this.settings.chapters.find((c) => c.id === s.state.chapterId);
-    if (old) old.pages = old.pages.filter((p) => p.docUid !== s.state.docUid);
+    // Sayfa çıkınca kalanlar yeniden numaralanır (yoksa sonradan eklenen sayfa var olan bir numarayı tekrar alır)
+    if (old) { old.pages = old.pages.filter((p) => p.docUid !== s.state.docUid).sort((a, b) => a.index - b.index); old.pages.forEach((p, i) => { p.index = i + 1; }); }
     s.state.chapterId = chId;
     const ch = chId && this.settings.chapters.find((c) => c.id === chId);
     if (ch && !ch.pages.find((p) => p.docUid === s.state.docUid)) ch.pages.push({ index: ch.pages.length + 1, title: s.title, docUid: s.state.docUid });
+    const mine = ch && ch.pages.find((p) => p.docUid === s.state.docUid);
+    s.state.pageIndex = mine ? mine.index : null;
     this.store.touch(s.docId); this.saveSettings(); this.showTab("chapter");
   },
 

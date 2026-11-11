@@ -113,7 +113,9 @@ function mergeDetections(existing, incoming) {
   };
   for (const n of incoming) {
     let best = null, bestIou = 0.35;
-    for (const e of out) {
+    // Yalnızca ÖNCEDEN var olan öğelerle eşleştir: aynı yanıttaki iki ayrı paragraf (ör. büyük yazının kutusuna
+    // giren kısa bir "!?") birbirine karışıp biri diğerinin metnini ezmesin.
+    for (const e of existing) {
       const v = overlap(e.bounds, n.bounds);
       if (v > bestIou) { bestIou = v; best = e; }
     }
